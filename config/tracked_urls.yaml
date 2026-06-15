@@ -1,0 +1,48 @@
+run_interval_hours: 6
+
+companies:
+  - name: "Anthropic"
+    url: "https://boards.greenhouse.io/anthropic"
+    notes: "Greenhouse"
+
+  - name: "LMI"
+    url: "https://careers-lmi.icims.com/jobs/search?ss=1"
+    scraper_key: "icims_javascript"
+    notes: "iCIMS behind AWS WAF — static scraper blocked (405), requires Playwright"
+
+  - name: "Booz Allen"
+    url: "https://careers.boozallen.com/jobs/search?1485=USA&listFilterMode=1&jobRecordsPerPage=20"
+    notes: "Avature, pre-filtered to USA"
+
+  - name: "RTX"
+    url: "https://globalhr.wd5.myworkdayjobs.com/en-US/REC_RTX_Ext_Gateway?q=software"
+    notes: "Workday CXS (validated)"
+
+  - name: "Fannie Mae"
+    url: "https://fanniemae.wd1.myworkdayjobs.com/en-US/FannieMaeCareers"
+    notes: "Workday CXS (validated)"
+
+  - name: "Leidos"
+    url: "https://careers.leidos.com/search/jobs?q=software"
+
+  - name: "Freddie Mac"
+    url: "https://careers.freddiemac.com/us/en/search-results?m=3&keywords=software" 
+
+  - name: "IBM"
+    url: "https://careers.ibm.com/en_US/careers/OpenJobs/software?10296=%5B103983%5D&10296_format=7813&listFilterMode=1&jobSort=postedDate&jobSortDirection=ASC&jobRecordsPerPage=9&" 
+
+  - name: Lockheed Martin
+    url: "https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?PageType=JobDetails&partnerid=25037&siteid=5010&jobId=826385&codes=ZA646&utm_campaign=LM_Space&utm_term=rm&utm_source=LinkedIn&utm_medium=Internet-Board#keyWordSearch=software"
+
+  - name: "CACI"
+    url: "https://searchcareers.caci.com/careers?query=software&start=0&location=United+States&pid=1443151001310&sort_by=match&filter_include_remote=1"
+
+  - name: "Morgan Stanley"
+    url: "https://morganstanley.eightfold.ai/careers?domain=morganstanley.com&query=software&start=0&pid=549797809384&sort_by=relevance"
+
+  - name: "Geico"
+    url: "https://geico.wd1.myworkdayjobs.com/External?q=software"
+
+  - name: "Delloite"
+    url: "https://apply.deloitte.com/en_US/careers/SearchJobs/software?listFilterMode=1&jobRecordsPerPage=10&sort=relevancy" 
+    

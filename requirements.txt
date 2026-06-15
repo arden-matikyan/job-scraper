@@ -1,0 +1,11 @@
+httpx
+beautifulsoup4
+playwright
+playwright-stealth
+numpy
+pyyaml
+apscheduler
+watchdog
+rich
+pytest
+python-dotenv

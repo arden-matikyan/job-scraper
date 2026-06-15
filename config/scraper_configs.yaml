@@ -1,0 +1,70 @@
+# Per-scraper tunable settings. Every value is optional; scrapers fall back to
+# the `defaults` block (or hard-coded defaults) when a key is absent.
+
+defaults:
+  request_timeout: 30
+  max_retries: 3
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+  embed_jobs: true        # compute the (currently unused) nomic embedding per job; false skips it for speed
+  extract_workers: 4      # concurrent llama3.2 extraction workers (1 = sequential).
+                          # For real parallelism also start Ollama with OLLAMA_NUM_PARALLEL>=this value.
+
+# Title hard-exclude filter (pipeline-level): a NEW job whose title contains any of
+# these terms (whole-word, case-insensitive) is dropped BEFORE any LLM extraction.
+# Set to [] to disable. Terms are matched as whole words so "Sr" won't match "Sriracha".
+title_exclude:
+  - Manager
+  - Staff
+  - Stf
+  - Lead
+  - Principle
+  - Principal
+  - Sr
+  - Sr.
+  - Senior
+  - Director
+
+# Keyword pre-filter (pipeline-level): a NEW job whose title + description contains
+# none of these (case-insensitive substring) is skipped BEFORE any LLM extraction.
+# Set to [] to disable (process everything). Override per-run with `run --keywords`.
+keyword_filter:
+  - software
+  - developer
+  - engineer
+
+greenhouse_api:
+  content: true
+
+lever_api: {}
+
+smartrecruiters:
+  page_limit: 100
+
+workday:
+  page_limit: 20
+  max_pages: 200          # safety cap: max pagination pages (page_limit jobs each)
+
+icims:
+  scan_window: 300        # scan +/- this many ids around the highest seen id
+  max_consecutive_misses: 150
+
+icims_javascript:
+  max_listing_pages: 50   # max search result pages to paginate (stops early when no new IDs)
+  nav_timeout_ms: 45000
+
+avature:
+  job_records_per_page: 20
+  max_pages: 100
+
+static_html:
+  max_pages: 20
+  link_patterns:
+    - "/jobs/"
+    - "/careers/"
+    - "/positions/"
+    - "/openings/"
+
+javascript_rendered:
+  wait_until: networkidle
+  max_pages: 20
+  profile_dir: "~/.job-scraper/browser-profile"
