@@ -68,3 +68,10 @@ javascript_rendered:
   wait_until: networkidle
   max_pages: 20
   profile_dir: "~/.job-scraper/browser-profile"
+
+leidos:
+  headless: false          # careers.leidos.com is behind Cloudflare's managed
+                           # challenge — a headful browser is required to clear it.
+  max_pages: 25             # listing pages to walk (25 jobs each); stops early when empty
+  nav_timeout_ms: 60000
+  profile_dir: "~/.job-scraper/browser-profile"

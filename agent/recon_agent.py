@@ -5,8 +5,10 @@ Staged decision sequence (cheap -> expensive):
   1b. registry SITE_HINTS match on the URL (no network)
   2.  fetch once, evaluate KB detection_signals
   3.  deep investigation (job-link scan + Ollama reasoning)
-  4.  scraper-writer generates + validates a custom scraper automatically
-  5.  record_success() persists a confirmed domain back into the KB
+
+When stages 1-3 don't resolve a scraper, the agent returns NEEDS_ATTENTION with
+its findings (platform guess, strategy, job links) so a scraper can be built by
+hand. record_success() persists a confirmed domain back into the KB.
 """
 from __future__ import annotations
 
@@ -210,8 +212,8 @@ class ReconAgent:
         # Stage 2 — fetch once, evaluate detection signals
         html = self.http.get_text(url)
         if not html:
-            note = "could not fetch page (network/WAF?)"
-            return self._auto_write(url, company_name, html, {"summary": note})
+            return ReconResult(url, None, None, 0.0, ReconStatus.NEEDS_ATTENTION,
+                               "could not fetch page (network/WAF?)")
         detections = self.kb.detect(url, html)
         if detections:
             best = detections[0]
@@ -222,11 +224,11 @@ class ReconAgent:
                 return ReconResult(url, best.scraper_key, best.platform, best.confidence,
                                    ReconStatus.MAPPED, f"detected via signals: {best.matched}")
 
-        # Stage 3 — deep investigation
+        # Stage 3 — deep investigation; no scraper resolved -> hand-build needed
         findings = self._deep_investigate(url, html, detections)
-
-        # Stage 4 — auto-write a custom scraper
-        return self._auto_write(url, company_name, html, findings)
+        note = findings.get("summary", "ambiguous platform")
+        self.log.info("[RECON] %s — no known scraper (build by hand): %s", url, note)
+        return ReconResult(url, None, None, 0.0, ReconStatus.NEEDS_ATTENTION, note)
 
     # -------------------------------------------------------- stage 3 helpers
     def _deep_investigate(self, url: str, html: str, detections: list[Detection]) -> dict:
@@ -256,26 +258,7 @@ class ReconAgent:
         )
         return findings
 
-    # -------------------------------------------------------- stage 4
-    def _auto_write(self, url, company_name, html, findings) -> ReconResult:
-        note = findings.get("summary", "ambiguous platform")
-        self.log.info("[RECON] %s — no known scraper, invoking writer: %s", url, note)
-        try:
-            from agent.scraper_writer import ScraperWriter, build_recon_report
-        except Exception as exc:
-            self.log.error("scraper_writer unavailable: %s", exc)
-            return ReconResult(url, None, None, 0.0, ReconStatus.NEEDS_ATTENTION,
-                               "writer unavailable")
-        report = build_recon_report(url, html, findings, self.http, company_name)
-        writer = ScraperWriter(self.ollama, http=self.http)
-        saved_key = writer.write(report, interactive=False)
-        if saved_key:
-            return ReconResult(url, saved_key, saved_key, 0.8, ReconStatus.MAPPED,
-                               "custom scraper auto-written")
-        return ReconResult(url, None, None, 0.0, ReconStatus.NEEDS_ATTENTION,
-                           f"writer could not produce a working scraper: {note}")
-
-    # -------------------------------------------------------------- stage 6
+    # ----------------------------------------------------------- KB persistence
     def record_success(self, url: str, platform: Optional[str]) -> None:
         if platform:
             self.kb.add_known_company(platform, urlparse(url).netloc)

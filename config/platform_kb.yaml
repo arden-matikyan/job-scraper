@@ -57,8 +57,7 @@ platforms:
     - '"/jobs/{id}/job/job" url pattern'
     job_detail_pattern: /jobs/{id}/job
     miss_detection: redirect to jobs/intro or jobs/search
-    known_companies:
-    - careers-lmi.icims.com
+    known_companies: []
     date_added: '2026-06-09'
   avature:
     scraper_key: avature

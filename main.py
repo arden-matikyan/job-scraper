@@ -112,6 +112,49 @@ def cmd_recon(console: Console, url: str) -> None:
     _print_recon(console, res)
 
 
+def cmd_recon_pending(console: Console) -> None:
+    # Ollama is optional here — stage 3 reasoning degrades gracefully without it.
+    ollama = banner(console, require_ollama=False)
+    entries = load_tracked_urls().get("companies", []) or []
+    # "uncategorized" == no scraper built yet == no scraper_key pinned in the yaml.
+    pending = [e for e in entries if not (e or {}).get("scraper_key")]
+    if not pending:
+        console.print("[green]Every tracked entry already has a scraper_key pinned.[/]")
+        return
+    console.print(f"Running recon (stages 1–3) on {len(pending)} uncategorized entr"
+                  f"{'y' if len(pending) == 1 else 'ies'}…\n")
+    agent = ReconAgent(ollama=ollama)
+    results: list[tuple[str, object]] = []
+    for entry in pending:
+        res = agent.investigate(entry.get("url", ""), company_name=entry.get("name"))
+        results.append((entry.get("name") or "?", res))
+        _print_recon(console, res)
+
+    table = Table(title="Recon-Pending Summary")
+    table.add_column("Company", style="cyan")
+    table.add_column("Status")
+    table.add_column("Platform/Scraper")
+    table.add_column("Conf.", justify="right")
+    table.add_column("Notes", max_width=40)
+    for name, res in results:
+        color = "green" if res.status == ReconStatus.MAPPED else "yellow"
+        table.add_row(
+            name,
+            f"[{color}]{res.status}[/]",
+            res.scraper_key or res.platform or "-",
+            f"{res.confidence:.2f}",
+            res.notes,
+        )
+    console.print(table)
+
+    needs = [name for name, res in results if res.status != ReconStatus.MAPPED]
+    if needs:
+        console.print(
+            f"\n[yellow]{len(needs)} entr{'y' if len(needs) == 1 else 'ies'} need a "
+            f"hand-built scraper:[/] {', '.join(needs)}"
+        )
+
+
 def cmd_add(console: Console, url: str) -> None:
     ollama = banner(console, require_ollama=True)
     agent = ReconAgent(ollama=ollama)
@@ -194,6 +237,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("watch", help="run once, then schedule on an interval")
     p_recon = sub.add_parser("recon", help="run the recon agent on a single URL")
     p_recon.add_argument("url")
+    sub.add_parser("recon-pending",
+                   help="run recon (stages 1–3) on every tracked entry without a scraper_key")
     p_add = sub.add_parser("add", help="recon a URL then save it to tracked_urls.yaml")
     p_add.add_argument("url")
     p_jobs = sub.add_parser("jobs", help="print recent / matching jobs from the DB")
@@ -213,6 +258,8 @@ def main(argv: list[str] | None = None) -> None:
         cmd_watch(console)
     elif args.command == "recon":
         cmd_recon(console, args.url)
+    elif args.command == "recon-pending":
+        cmd_recon_pending(console)
     elif args.command == "add":
         cmd_add(console, args.url)
     elif args.command == "jobs":
