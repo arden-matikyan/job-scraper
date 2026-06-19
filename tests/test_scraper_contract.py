@@ -160,8 +160,6 @@ def test_lever_smoke():
     assert len(jobs) == 1
     job = jobs[0]
     assert_valid_job(job, "lever_api")
-    assert job.employment_type == "full_time"
-    assert job.remote_type == "remote"
     assert "Python" in job.raw_text
     assert job.locations_all == ["NYC", "SF"]
 
@@ -189,8 +187,6 @@ def test_smartrecruiters_smoke():
     assert len(jobs) == 1
     job = jobs[0]
     assert_valid_job(job, "smartrecruiters")
-    assert job.remote_type == "remote"
-    assert job.employment_type == "full_time"
     assert "Analyze data" in job.raw_text and "PhD preferred" in job.raw_text
 
 
@@ -223,7 +219,6 @@ def test_workday_smoke():
     job = jobs[0]
     assert_valid_job(job, "workday")
     assert job.job_id == "JR100"
-    assert job.employment_type == "full_time"
     assert "Train models" in job.raw_text
     assert "&#xa;" not in job.raw_text  # entity decoded
 

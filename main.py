@@ -24,6 +24,7 @@ from rich.table import Table
 
 from agent.ollama_client import OllamaClient
 from agent.recon_agent import PlatformKB, ReconAgent, ReconStatus, config_path, project_root
+from filter.job_filter import JobFilter
 from pipeline.runner import Runner, load_tracked_urls
 from pipeline.scheduler import PipelineScheduler
 from scrapers.registry import registry
@@ -185,6 +186,54 @@ def cmd_add(console: Console, url: str) -> None:
         console.print(f"[red]Could not write tracked_urls.yaml: {exc}[/]")
 
 
+def cmd_filter_jobs(
+    console: Console,
+    company: str | None,
+    limit: int | None,
+    rerun: bool,
+) -> None:
+    ollama = banner(console, require_ollama=True)
+    store = JobStore()
+    results = JobFilter(store, ollama).run(company=company, limit=limit, rerun=rerun)
+    qualified = results["qualified"]
+    not_qualified = results["not_qualified"]
+
+    nq_table = Table(title=f"[bold red]Not Qualified ({len(not_qualified)})[/]")
+    nq_table.add_column("Title", style="red", max_width=38)
+    nq_table.add_column("Company", max_width=18)
+    nq_table.add_column("Location", max_width=22)
+    nq_table.add_column("Reason", max_width=46)
+    for j in not_qualified:
+        nq_table.add_row(
+            j.get("title") or "-",
+            j.get("company") or "-",
+            j.get("location") or "-",
+            j.get("_filter_reason") or "-",
+        )
+    console.print(nq_table)
+
+    q_table = Table(title=f"[bold green]Qualified ({len(qualified)})[/]")
+    q_table.add_column("Title", style="cyan", max_width=40)
+    q_table.add_column("Company", max_width=18)
+    q_table.add_column("Location", max_width=24)
+    q_table.add_column("Posted")
+    for j in qualified:
+        q_table.add_row(
+            j.get("title") or "-",
+            j.get("company") or "-",
+            j.get("location") or "-",
+            (j.get("posted_date") or "-")[:10],
+        )
+    console.print(q_table)
+
+    total = len(qualified) + len(not_qualified)
+    console.print(
+        f"\n[dim]Evaluated {total} job(s) — "
+        f"[green]{len(qualified)} qualified[/], "
+        f"[red]{len(not_qualified)} not qualified[/dim]"
+    )
+
+
 def cmd_jobs(console: Console, search: str | None) -> None:
     banner(console, require_ollama=False)
     store = JobStore()
@@ -194,7 +243,6 @@ def cmd_jobs(console: Console, search: str | None) -> None:
     table.add_column("Title", style="cyan", max_width=40)
     table.add_column("Company", max_width=18)
     table.add_column("Location", max_width=24)
-    table.add_column("Type")
     table.add_column("Scraper")
     table.add_column("Posted")
     for j in jobs:
@@ -202,7 +250,6 @@ def cmd_jobs(console: Console, search: str | None) -> None:
             j.get("title") or "-",
             j.get("company") or "-",
             j.get("location") or "-",
-            j.get("employment_type") or "-",
             j.get("scraper_key") or "-",
             (j.get("posted_date") or "-")[:10],
         )
@@ -243,6 +290,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_add.add_argument("url")
     p_jobs = sub.add_parser("jobs", help="print recent / matching jobs from the DB")
     p_jobs.add_argument("--search", default=None, help="keyword to search in title + description")
+    p_filter = sub.add_parser(
+        "filter-jobs", help="classify saved jobs as qualified / not qualified"
+    )
+    p_filter.add_argument("--company", default=None, help="only filter jobs from this company")
+    p_filter.add_argument("--limit", type=int, default=None, help="max number of jobs to evaluate")
+    p_filter.add_argument(
+        "--rerun", action="store_true", help="re-evaluate already-filtered jobs"
+    )
     return parser
 
 
@@ -264,6 +319,8 @@ def main(argv: list[str] | None = None) -> None:
         cmd_add(console, args.url)
     elif args.command == "jobs":
         cmd_jobs(console, args.search)
+    elif args.command == "filter-jobs":
+        cmd_filter_jobs(console, args.company, args.limit, args.rerun)
 
 
 if __name__ == "__main__":

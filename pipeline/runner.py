@@ -110,6 +110,10 @@ class Runner:
     def run(self, entries: list[dict]) -> list[RunResult]:
         results: list[RunResult] = []
         for entry in entries or []:
+            if entry.get("skip"):
+                name = entry.get("name", "?")
+                self.console.print(f"[dim]-- {name} skipped (skip: true)[/]")
+                continue
             try:
                 results.append(self._run_one(entry))
             except Exception as exc:  # a company failure never aborts the run
@@ -145,6 +149,9 @@ class Runner:
             return RunResult(name, url, recon.scraper_key, 0, 0, 0, time.time() - t0, recon.status)
 
         cfg = self._config_for(recon.scraper_key)
+        _ENTRY_META = {"name", "url", "scraper_key", "notes", "skip"}
+        entry_extras = {k: v for k, v in entry.items() if k not in _ENTRY_META}
+        cfg = {**cfg, **entry_extras}
         scraper = self.registry.get(recon.scraper_key, http=self.http, config=cfg)
         if scraper is None:
             self.store.log_recon(url, recon.platform, recon.scraper_key, 0, "instantiation failed")
@@ -208,8 +215,8 @@ class Runner:
         return bool(self._title_exclude_pattern and self._title_exclude_pattern.search(title))
 
     def _matches_keywords(self, raw) -> bool:
-        haystack = f"{getattr(raw, 'title', '') or ''} {getattr(raw, 'raw_text', '') or ''}".lower()
-        return any(kw in haystack for kw in self.keyword_filter)
+        title = f" {(getattr(raw, 'title', '') or '').lower()} "
+        return any(kw in title for kw in self.keyword_filter)
 
     def _safe_ingest(self, raw, company_name: str) -> str:
         try:

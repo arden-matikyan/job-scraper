@@ -45,9 +45,6 @@ class RawJob:
     company: Optional[str] = None
     location: Optional[str] = None
     locations_all: Optional[list[str]] = None
-    remote_type: Optional[str] = None
-    employment_type: Optional[str] = None
-    salary_raw: Optional[str] = None
     posted_date: Optional[str] = None
     platform: Optional[str] = None
     # set by a detail-fetch scraper when source_url was already in the DB and the
@@ -60,7 +57,7 @@ class RawJob:
         """Scraper-known fields that override LLM output during the merge step."""
         keys = (
             "job_id", "title", "company", "location", "locations_all",
-            "remote_type", "employment_type", "salary_raw", "posted_date",
+            "posted_date",
         )
         return {
             k: getattr(self, k)

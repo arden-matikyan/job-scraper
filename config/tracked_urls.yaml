@@ -2,6 +2,7 @@ run_interval_hours: 6
 companies:
 - name: Anthropic
   url: https://boards.greenhouse.io/anthropic
+  skip: true
   notes: Greenhouse
 - name: Booz Allen
   url: https://careers.boozallen.com/jobs/search?1485=USA&listFilterMode=1&jobRecordsPerPage=20
@@ -14,14 +15,25 @@ companies:
   notes: Workday CXS (validated)
 - name: Freddie Mac
   url: https://careers.freddiemac.com/us/en/search-results?m=3&keywords=software
+  scraper_key: freddiemac
+  notes: Phenom People SPA; API requires same-origin browser session (Playwright headless)
 - name: IBM
-  url: https://careers.ibm.com/en_US/careers/OpenJobs/software?10296=%5B103983%5D&10296_format=7813&listFilterMode=1&jobSort=postedDate&jobSortDirection=ASC&jobRecordsPerPage=9&
+  url: https://careers.ibm.com/en_US/careers/OpenJobs/software/?10296=%5B103983%5D&10296_format=7813&listFilterMode=1&jobSort=postedDate&jobSortDirection=ASC&jobRecordsPerPage=48
+  scraper_key: ibm
+  notes: Radancy/TalentBrew, server-rendered + AWS WAF (headful browser scraper)
 - name: Lockheed Martin
-  url: https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?PageType=JobDetails&partnerid=25037&siteid=5010&jobId=826385&codes=ZA646&utm_campaign=LM_Space&utm_term=rm&utm_source=LinkedIn&utm_medium=Internet-Board#keyWordSearch=software
+  url: https://www.lockheedmartinjobs.com/search-jobs/software/694/1
+  scraper_key: lockheed
+  oldest_date: "2026-05-18"
+  notes: Radancy/TalentBrew, plain HTML (no bot challenge), JSON-LD on detail pages
 - name: CACI
   url: https://searchcareers.caci.com/careers?query=software&start=0&location=United+States&pid=1443151001310&sort_by=match&filter_include_remote=1
+  scraper_key: eightfold
+  notes: Eightfold PCSX JSON API, no browser needed
 - name: Morgan Stanley
-  url: https://morganstanley.eightfold.ai/careers?domain=morganstanley.com&query=software&start=0&pid=549797809384&sort_by=relevance
+  url: https://morganstanley.eightfold.ai/careers?domain=morganstanley.com&query=software&start=0&pid=549795450290&sort_by=relevance&filter_country=United+States+of+America
+  scraper_key: eightfold
+  notes: Eightfold PCSX JSON API, no browser needed
 - name: Geico
   url: https://geico.wd1.myworkdayjobs.com/External?q=software
 - name: deloitte
@@ -31,4 +43,13 @@ companies:
   url: https://careers.leidos.com/search/clearance/none-public-trust/jobs/in/country/united-states?q=software
   scraper_key: leidos
   notes: Talemetry, server-rendered + Cloudflare (headful browser scraper)
+- name: Oracle
+  url: https://careers.oracle.com/en/sites/jobsearch/jobs?keyword=software&lastSelectedFacet=LOCATIONS&location=United+States&locationId=300000000149325&mode=location&selectedLocationsFacet=300000000149325
+  scraper_key: oracle
+  notes: Oracle Recruiting Cloud (ORC) JSON API; careers.oracle.com proxies to eeho.fa.us2.oraclecloud.com
+- name: LMI
+  url: https://careers-lmi.icims.com/jobs/search?pr=0&searchKeyword=software&schemaId=&o=
+  scraper_key: lmi
+  notes: iCIMS (content iframe) behind AWS WAF; Playwright scraper, pr-paginated
+
 

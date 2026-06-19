@@ -1,0 +1,155 @@
+"""Post-scrape qualification filter.
+
+Reads jobs from the DB and classifies each as "qualified" or "not_qualified"
+based on two disqualifying criteria:
+
+  1. Active security clearance required — detected via Ollama because simple
+     keyword matching produces false positives ("active state bar membership",
+     "actively pursuing CPA", etc.).  Ollama is only called when clearance-
+     related terms actually appear in required_qualifications.
+
+  2. 3+ years of experience required in any skill/domain — detected by regex
+     on each required_qualifications item.
+
+Results are persisted to the jobs table (filter_status, filter_reason) so
+re-runs skip already-evaluated jobs.
+
+Note: title-relevance filtering (keyword match on the job title) is handled
+upstream in runner.py before jobs are saved to the DB, so it is not repeated
+here.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+from typing import Optional
+
+from rich.progress import track
+
+from agent.ollama_client import OllamaClient
+from storage.job_store import JobStore
+
+logger = logging.getLogger(__name__)
+
+# Matches "3+ years", "5 or more years", "3-5+ years" (takes lower bound), etc.
+_EXP_RE = re.compile(
+    r'\b([3-9]\d*|\d{2,})\s*[-–]?\s*(?:\d+\+?)?\s*\+?\s*(?:or\s+more\s+)?years?\b',
+    re.I,
+)
+
+# Pre-screen: only send to Ollama when these terms appear in required_qualifications.
+_CLEARANCE_TERMS = re.compile(
+    r'\b(clearance|secret|ts/sci|ts\s+sci|classified|dod\s+clearance|top\s+secret)\b',
+    re.I,
+)
+
+_CLEARANCE_PROMPT = """\
+You are a job screener. Given the required qualifications listed below, answer:
+Does this role REQUIRE an active security clearance (Secret, Top Secret, TS/SCI, or similar)?
+
+Rules:
+- Only answer true if clearance is explicitly REQUIRED, not just preferred or mentioned.
+- "Active membership in a state bar" is NOT a security clearance — answer false.
+- "Actively pursuing CPA" is NOT a security clearance — answer false.
+
+Required qualifications:
+{quals}
+
+Respond with JSON only, no explanation:
+{{"requires_clearance": true_or_false, "evidence": "quoted line or null"}}"""
+
+
+class JobFilter:
+    def __init__(self, store: JobStore, ollama: OllamaClient) -> None:
+        self.store = store
+        self.ollama = ollama
+
+    # ---------------------------------------------------------------- public
+
+    def run(
+        self,
+        company: Optional[str] = None,
+        limit: Optional[int] = None,
+        rerun: bool = False,
+    ) -> dict[str, list[dict]]:
+        """Classify jobs and return {"qualified": [...], "not_qualified": [...]}."""
+        jobs = self.store.get_jobs_for_filter(company=company, limit=limit, rerun=rerun)
+        if not jobs:
+            return {"qualified": [], "not_qualified": []}
+
+        qualified: list[dict] = []
+        not_qualified: list[dict] = []
+
+        for job in track(jobs, description="Filtering jobs…"):
+            reasons: list[str] = []
+
+            exp = self._check_experience(job)
+            if exp:
+                reasons.append(exp)
+
+            clearance = self._check_clearance(job)
+            if clearance:
+                reasons.append(clearance)
+
+            if reasons:
+                status = "not_qualified"
+                reason_str = "; ".join(reasons)
+                not_qualified.append({**job, "_filter_reason": reason_str})
+            else:
+                status = "qualified"
+                reason_str = ""
+                qualified.append(job)
+
+            self.store.update_filter_status(job["id"], status, reason_str)
+
+        return {"qualified": qualified, "not_qualified": not_qualified}
+
+    # --------------------------------------------------------------- private
+
+    def _check_experience(self, job: dict) -> Optional[str]:
+        """Return a reason string if ≥3 years of experience is required, else None."""
+        candidates: list[str] = []
+
+        for item in job.get("required_qualifications") or []:
+            if isinstance(item, str):
+                candidates.append(item)
+
+        for text in candidates:
+            m = _EXP_RE.search(text)
+            if m:
+                try:
+                    years = int(m.group(1))
+                except ValueError:
+                    continue
+                if years >= 3:
+                    return f"{years}+ years of experience required"
+
+        return None
+
+    def _check_clearance(self, job: dict) -> Optional[str]:
+        """Return a reason string if active clearance is required, else None.
+
+        Only calls Ollama when clearance-related terms appear in required_qualifications.
+        """
+        quals: list[str] = [
+            item for item in (job.get("required_qualifications") or [])
+            if isinstance(item, str)
+        ]
+        quals_text = "\n".join(quals)
+
+        if not _CLEARANCE_TERMS.search(quals_text):
+            return None
+
+        prompt = _CLEARANCE_PROMPT.format(quals=quals_text)
+        result = self.ollama.generate_json(prompt, default={"requires_clearance": False, "evidence": None})
+
+        if not isinstance(result, dict):
+            logger.warning("Unexpected Ollama response for job %s: %r", job.get("id"), result)
+            return None
+
+        if result.get("requires_clearance"):
+            evidence = result.get("evidence") or "security clearance"
+            return f"Clearance required: {evidence}"
+
+        return None

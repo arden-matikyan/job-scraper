@@ -81,6 +81,35 @@ Reconnaissances the URL, prompts for a company name, then saves the entry to `tr
 
 ---
 
+### `filter-jobs` — classify saved jobs as qualified or not qualified
+
+```bash
+python main.py filter-jobs
+```
+
+Reads jobs from the database and disqualifies any that require an active security clearance or 3+ years of experience. Results are saved back to the database so re-runs skip already-evaluated jobs.
+
+Options:
+
+| Flag | Description |
+|------|-------------|
+| `--company NAME` | Only evaluate jobs from this company |
+| `--limit N` | Max number of jobs to evaluate |
+| `--rerun` | Re-evaluate jobs that were already filtered |
+
+Examples:
+
+```bash
+python main.py filter-jobs
+python main.py filter-jobs --company "Lockheed Martin"
+python main.py filter-jobs --limit 50
+python main.py filter-jobs --rerun
+```
+
+Requires Ollama — clearance detection uses `llama3.2` to avoid false positives from phrases like "active state bar membership."
+
+---
+
 ### `jobs` — view scraped jobs from the database
 
 ```bash

@@ -19,7 +19,7 @@ class CountingOllama:
 
     def generate_json(self, prompt, default=None, system=None):
         self.generate_calls += 1
-        return {"description_summary": "ok"}
+        return {"title": "ok"}
 
     def embed(self, text):
         self.embed_calls += 1

@@ -75,8 +75,6 @@ class LeverScraper(BaseScraper):
             company=company_name,
             location=location,
             locations_all=all_locs if all_locs and len(all_locs) > 1 else None,
-            employment_type=_EMPLOYMENT.get(commitment),
-            remote_type=_REMOTE.get(workplace),
             posted_date=self._posted(posting.get("createdAt")),
             platform="lever",
         )

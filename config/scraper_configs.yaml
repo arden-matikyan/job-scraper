@@ -23,14 +23,33 @@ title_exclude:
   - Sr.
   - Senior
   - Director
+  - "3"
+  - "4" 
+  - "5"
+  - "L3"
+  - "L4"
+  - "L5"
+  - "L6"
+  - "Civil"
 
-# Keyword pre-filter (pipeline-level): a NEW job whose title + description contains
-# none of these (case-insensitive substring) is skipped BEFORE any LLM extraction.
+# Keyword pre-filter (pipeline-level): a NEW job whose title contains none of these
+# (case-insensitive substring) is skipped BEFORE any LLM extraction.
 # Set to [] to disable (process everything). Override per-run with `run --keywords`.
 keyword_filter:
   - software
   - developer
   - engineer
+  - scientist
+  - architect
+  - " ai "
+  - " ml "
+  - machine learning
+  - artificial intelligence
+  - generative
+  - full stack
+  - fullstack
+  - backend
+  - back-end
 
 greenhouse_api:
   content: true
@@ -74,4 +93,39 @@ leidos:
                            # challenge — a headful browser is required to clear it.
   max_pages: 25             # listing pages to walk (25 jobs each); stops early when empty
   nav_timeout_ms: 60000
+  profile_dir: "~/.job-scraper/browser-profile"
+
+eightfold:
+  max_pages: 200            # 10 jobs/page; stops early at data.count (CACI ~979, MS ~214)
+
+lockheed:
+  max_pages: 200            # 15 jobs/page; 200 pages = 3000 jobs (software search ~2200)
+
+ibm:
+  headless: false          # careers.ibm.com is behind an AWS WAF challenge — a
+                           # headful browser is required to clear it.
+  max_pages: 40            # listing pages to walk; stops early when a page is empty
+  records_per_page: 48     # jobs per listing page (drives the jobOffset step)
+  nav_timeout_ms: 60000
+  profile_dir: "~/.job-scraper/browser-profile"
+
+oracle:
+  page_limit: 25           # API page size; "Show more results" = one offset bump
+  max_pages: 200           # safety cap on pagination (25 jobs/page)
+  site_number: CX_1        # ORC Candidate Experience site id (Oracle's own site)
+
+lmi:
+  headless: true           # headless clears the AWS WAF once the profile is warm;
+                           # set false if it starts demanding an interactive captcha
+  max_pages: 50            # listing pages to walk (pr=0..N, 20 jobs/page); stops early when empty
+  nav_timeout_ms: 45000
+  spa_wait_ms: 2500        # ms to wait after navigation for the content iframe to render
+  profile_dir: "~/.job-scraper/browser-profile"
+
+freddiemac:
+  headless: true           # no Cloudflare/WAF on careers.freddiemac.com
+  max_jobs: 200            # total job cap (10/listing page)
+  nav_timeout_ms: 45000
+  spa_wait_ms: 10000       # ms to wait after domcontentloaded for SPA to render jobs
+  detail_wait_ms: 6000     # ms to wait on each job detail page
   profile_dir: "~/.job-scraper/browser-profile"

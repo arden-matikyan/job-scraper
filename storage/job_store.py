@@ -20,16 +20,12 @@ _LIST_FIELDS = (
     "locations_all",
     "required_qualifications",
     "preferred_qualifications",
-    "required_skills",
-    "preferred_skills",
 )
 
 # Column order for the jobs table (excludes the autoincrement id).
 _JOB_COLUMNS = (
-    "job_id", "title", "company", "location", "locations_all", "remote_type",
-    "employment_type", "description_full", "description_summary",
-    "required_qualifications", "preferred_qualifications", "required_skills",
-    "preferred_skills", "experience_raw", "education_raw", "salary_raw",
+    "job_id", "title", "company", "location", "locations_all",
+    "description_full", "required_qualifications", "preferred_qualifications",
     "posted_date", "source_url", "scraper_key", "scraped_at", "platform",
     "embedding", "hash",
 )
@@ -83,11 +79,8 @@ class JobStore:
                 CREATE TABLE IF NOT EXISTS jobs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     job_id TEXT, title TEXT, company TEXT, location TEXT,
-                    locations_all TEXT, remote_type TEXT, employment_type TEXT,
-                    description_full TEXT, description_summary TEXT,
+                    locations_all TEXT, description_full TEXT,
                     required_qualifications TEXT, preferred_qualifications TEXT,
-                    required_skills TEXT, preferred_skills TEXT,
-                    experience_raw TEXT, education_raw TEXT, salary_raw TEXT,
                     posted_date TEXT, source_url TEXT, scraper_key TEXT,
                     scraped_at TEXT, platform TEXT, embedding BLOB,
                     hash TEXT UNIQUE
@@ -105,6 +98,13 @@ class JobStore:
                 CREATE INDEX IF NOT EXISTS idx_jobs_scraped_at ON jobs(scraped_at);
                 """
             )
+            # Safe migration: add filter columns if they don't exist yet.
+            for col, ctype in [("filter_status", "TEXT"), ("filter_reason", "TEXT")]:
+                try:
+                    self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ctype}")
+                    self._conn.commit()
+                except sqlite3.OperationalError:
+                    pass  # column already exists
             self._conn.commit()
 
     # ------------------------------------------------------------------- dedup
@@ -217,6 +217,50 @@ class JobStore:
         with self._lock:
             cur = self._conn.execute("SELECT COUNT(*) AS n FROM jobs")
             return int(cur.fetchone()["n"])
+
+    # --------------------------------------------------------------- filtering
+
+    def get_jobs_for_filter(
+        self,
+        company: Optional[str] = None,
+        limit: Optional[int] = None,
+        rerun: bool = False,
+    ) -> list[dict]:
+        """Return jobs to be evaluated by the filter.
+
+        By default skips jobs that already have a filter_status so re-runs are
+        fast.  Pass rerun=True to re-evaluate everything.
+        """
+        clauses: list[str] = []
+        params: list[Any] = []
+
+        if not rerun:
+            clauses.append("filter_status IS NULL")
+        if company:
+            clauses.append("LOWER(company) = LOWER(?)")
+            params.append(company)
+
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        limit_clause = f"LIMIT {int(limit)}" if limit else ""
+
+        with self._lock:
+            cur = self._conn.execute(
+                f"SELECT * FROM jobs {where} ORDER BY id DESC {limit_clause}",
+                params,
+            )
+            return self._rows_to_dicts(cur.fetchall())
+
+    def update_filter_status(self, job_id: int, status: str, reason: str) -> None:
+        """Persist the filter decision for a single job."""
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "UPDATE jobs SET filter_status = ?, filter_reason = ? WHERE id = ?",
+                    (status, reason, job_id),
+                )
+                self._conn.commit()
+            except Exception as exc:
+                logger.error("update_filter_status failed for id=%s: %s", job_id, exc)
 
     # --------------------------------------------------------------- recon log
     def log_recon(

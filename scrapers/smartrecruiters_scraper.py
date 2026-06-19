@@ -100,8 +100,6 @@ class SmartRecruitersScraper(BaseScraper):
             title=posting.get("name"),
             company=company_name or (posting.get("company") or {}).get("name"),
             location=location_str or None,
-            remote_type="remote" if loc.get("remote") else None,
-            employment_type=_EMPLOYMENT.get(emp),
             posted_date=posting.get("releasedDate"),
             platform="smartrecruiters",
         )

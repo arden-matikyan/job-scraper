@@ -100,7 +100,6 @@ class WorkdayScraper(BaseScraper):
             company=company_name,
             location=primary,
             locations_all=locations_all,
-            employment_type=_TIME_TYPE.get(time_type),
             posted_date=info.get("startDate") or jp.get("postedOn"),
             platform="workday",
         )

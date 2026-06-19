@@ -1,9 +1,8 @@
 """Tests for the job extractor and the Ollama JSON safe-parse.
 
 A mock Ollama client returns canned responses so these run without a live model.
-Covers: full-schema extraction, verbatim experience/education, enum normalization,
-list coercion, hint override, and the malformed-output fallback that must preserve
-description_full.
+Covers: full-schema extraction, list coercion, hint override, and the
+malformed-output fallback that must preserve description_full.
 """
 from __future__ import annotations
 
@@ -21,16 +20,8 @@ VALID_RESPONSE = {
     "company": "Acme",
     "location": "McLean, VA",
     "locations_all": ["McLean, VA", "Austin, TX"],
-    "remote_type": "Hybrid",
-    "employment_type": "Full-Time",
-    "description_summary": "A backend role. Works on services. Needs Python.",
     "required_qualifications": ["5+ years of experience", "Bachelor's degree in CS"],
     "preferred_qualifications": ["AWS experience"],
-    "required_skills": ["Python", "Go"],
-    "preferred_skills": ["Kubernetes"],
-    "experience_raw": "5+ years",
-    "education_raw": "Bachelor's degree in CS",
-    "salary_raw": "$200,000",
     "posted_date": "2026-01-01",
 }
 
@@ -63,47 +54,24 @@ def test_full_extraction_values():
     assert rec["company"] == "Acme"
     assert rec["locations_all"] == ["McLean, VA", "Austin, TX"]
     assert rec["required_qualifications"] == ["5+ years of experience", "Bachelor's degree in CS"]
-    assert rec["required_skills"] == ["Python", "Go"]
-    assert rec["preferred_skills"] == ["Kubernetes"]
+    assert rec["preferred_qualifications"] == ["AWS experience"]
     assert rec["description_full"] == SAMPLE_TEXT  # always the raw text
     assert rec["source_url"] == "https://x/jobs/1"
 
 
-def test_experience_and_education_verbatim():
-    rec = _extract(VALID_RESPONSE)
-    assert rec["experience_raw"] == "5+ years"          # not normalized to a number
-    assert rec["education_raw"] == "Bachelor's degree in CS"
-    assert rec["salary_raw"] == "$200,000"
-
-
-def test_enum_normalization():
-    rec = _extract(VALID_RESPONSE)
-    assert rec["remote_type"] == "hybrid"               # "Hybrid" -> hybrid
-    assert rec["employment_type"] == "full_time"        # "Full-Time" -> full_time
-
-
-def test_enum_unknown_falls_back_to_unspecified():
-    resp = dict(VALID_RESPONSE, remote_type="banana", employment_type="weird")
-    rec = _extract(resp)
-    assert rec["remote_type"] == "unspecified"
-    assert rec["employment_type"] == "unspecified"
-
-
 def test_list_coercion_from_string():
-    resp = dict(VALID_RESPONSE, required_skills="Python")  # model returned a string
+    resp = dict(VALID_RESPONSE, required_qualifications="Must have Python")
     rec = _extract(resp)
-    assert rec["required_skills"] == ["Python"]
+    assert rec["required_qualifications"] == ["Must have Python"]
 
 
 def test_null_handling():
-    resp = dict(VALID_RESPONSE, salary_raw=None, experience_raw=None)
+    resp = dict(VALID_RESPONSE, posted_date=None)
     rec = _extract(resp)
-    assert rec["salary_raw"] is None
-    assert rec["experience_raw"] is None
+    assert rec["posted_date"] is None
 
 
 def test_hints_override_llm():
-    # scraper-known fields must win over the LLM
     hints = {"job_id": "REQ-9", "company": "RealCo", "title": "Override Title"}
     rec = _extract(VALID_RESPONSE, hints=hints)
     assert rec["job_id"] == "REQ-9"
@@ -112,19 +80,15 @@ def test_hints_override_llm():
 
 
 def test_malformed_output_preserves_description_full():
-    # empty/invalid JSON -> default schema, but description_full is kept
     rec = _extract({})
     assert rec["description_full"] == SAMPLE_TEXT
     assert rec["title"] is None
     assert rec["required_qualifications"] == []
-    assert rec["remote_type"] == "unspecified"
-    assert rec["employment_type"] == "unspecified"
 
 
 def test_extractor_never_raises_on_empty_text():
     rec = _extract(VALID_RESPONSE, text="")
     assert rec["description_full"] is None
-    # hints still apply
     rec2 = _extract({}, text="", hints={"title": "T"})
     assert rec2["title"] == "T"
 
