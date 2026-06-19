@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+jobs.db
+scraper.log
+scraper.log.1
+logs/
