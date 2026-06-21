@@ -6,9 +6,10 @@
     python main.py add <url>                recon a URL, then save it to tracked_urls.yaml
     python main.py jobs [--search "..."]    print recent / matching jobs from the DB
 
-Every command logs registered scrapers + tracked-URL count and checks Ollama health
-on startup. Pipeline commands exit if Ollama is down; `jobs` only warns (DB reads
-don't need the model). File logging goes to logs/scraper.log; console uses rich.
+Every command logs registered scrapers + tracked-URL count and checks LLM health
+on startup. The LLM provider is selected in agent/llm.py (Claude or Ollama).
+Pipeline commands exit if the LLM is down; `jobs` only warns (DB reads don't need
+the model). File logging goes to logs/scraper.log; console uses rich.
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
-from agent.ollama_client import OllamaClient
+from agent.llm import LLMClient, get_llm_client, resolve_provider
 from agent.recon_agent import PlatformKB, ReconAgent, ReconStatus, config_path, project_root
 from filter.job_filter import JobFilter
 from pipeline.runner import Runner, load_tracked_urls
@@ -50,31 +51,39 @@ def setup_logging() -> None:
         root.addHandler(handler)
 
 
-def banner(console: Console, require_ollama: bool = True) -> OllamaClient:
+def banner(console: Console, require_llm: bool = True) -> LLMClient:
     registry.discover()
     keys = registry.all_keys()
     console.print(f"[bold]job-scraper[/] — {len(keys)} scrapers registered: {', '.join(keys)}")
     tracked = load_tracked_urls().get("companies", []) or []
     console.print(f"Tracked URLs: {len(tracked)}")
 
-    ollama = OllamaClient()
-    if ollama.check_health():
-        console.print(f"[green]Ollama OK[/] (model={ollama.model}, embed={ollama.embed_model})\n")
+    provider = resolve_provider()
+    llm = get_llm_client()
+    if llm.check_health():
+        embed = llm.embed_model or "off"
+        console.print(f"[green]LLM OK[/] (provider={provider}, model={llm.model}, embed={embed})\n")
     else:
-        console.print(
-            "[red]Ollama is not available[/] at http://localhost:11434.\n"
-            "Start it with [bold]ollama serve[/] and pull the models:\n"
-            "  ollama pull llama3.2\n  ollama pull nomic-embed-text"
-        )
-        if require_ollama:
+        if provider == "claude":
+            console.print(
+                "[red]Claude is not available[/].\n"
+                "Set [bold]ANTHROPIC_API_KEY[/] and confirm the model id in agent/anthropic_client.py."
+            )
+        else:
+            console.print(
+                "[red]Ollama is not available[/] at http://localhost:11434.\n"
+                "Start it with [bold]ollama serve[/] and pull the models:\n"
+                "  ollama pull llama3.2\n  ollama pull nomic-embed-text"
+            )
+        if require_llm:
             sys.exit(1)
-        console.print("[yellow]Continuing without Ollama (DB read only).[/]\n")
-    return ollama
+        console.print("[yellow]Continuing without the LLM (DB read only).[/]\n")
+    return llm
 
 
 def cmd_run(console: Console, no_embed: bool = False, workers: int | None = None,
             keywords: str | None = None, company: str | None = None) -> None:
-    ollama = banner(console, require_ollama=True)
+    ollama = banner(console, require_llm=True)
     entries = load_tracked_urls().get("companies", []) or []
     if not entries:
         console.print("[yellow]No tracked URLs. Add one with `python main.py add <url>`.[/]")
@@ -102,12 +111,12 @@ def cmd_run(console: Console, no_embed: bool = False, workers: int | None = None
 
 
 def cmd_watch(console: Console) -> None:
-    ollama = banner(console, require_ollama=True)
+    ollama = banner(console, require_llm=True)
     PipelineScheduler(Runner(ollama=ollama)).start(run_immediately=True)
 
 
 def cmd_recon(console: Console, url: str) -> None:
-    ollama = banner(console, require_ollama=True)
+    ollama = banner(console, require_llm=True)
     agent = ReconAgent(ollama=ollama)
     res = agent.investigate(url)
     _print_recon(console, res)
@@ -115,7 +124,7 @@ def cmd_recon(console: Console, url: str) -> None:
 
 def cmd_recon_pending(console: Console) -> None:
     # Ollama is optional here — stage 3 reasoning degrades gracefully without it.
-    ollama = banner(console, require_ollama=False)
+    ollama = banner(console, require_llm=False)
     entries = load_tracked_urls().get("companies", []) or []
     # "uncategorized" == no scraper built yet == no scraper_key pinned in the yaml.
     pending = [e for e in entries if not (e or {}).get("scraper_key")]
@@ -157,7 +166,7 @@ def cmd_recon_pending(console: Console) -> None:
 
 
 def cmd_add(console: Console, url: str) -> None:
-    ollama = banner(console, require_ollama=True)
+    ollama = banner(console, require_llm=True)
     agent = ReconAgent(ollama=ollama)
     res = agent.investigate(url)
     _print_recon(console, res)
@@ -192,7 +201,7 @@ def cmd_filter_jobs(
     limit: int | None,
     rerun: bool,
 ) -> None:
-    ollama = banner(console, require_ollama=True)
+    ollama = banner(console, require_llm=True)
     store = JobStore()
     results = JobFilter(store, ollama).run(company=company, limit=limit, rerun=rerun)
     qualified = results["qualified"]
@@ -235,7 +244,7 @@ def cmd_filter_jobs(
 
 
 def cmd_jobs(console: Console, search: str | None) -> None:
-    banner(console, require_ollama=False)
+    banner(console, require_llm=False)
     store = JobStore()
     jobs = store.search_jobs(search) if search else store.get_recent_jobs(20)
     title = f'Jobs matching "{search}"' if search else "Recent jobs"
@@ -302,6 +311,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    try:  # load ANTHROPIC_API_KEY / overrides from a local .env if present
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
     setup_logging()
     console = Console()
     args = build_parser().parse_args(argv)

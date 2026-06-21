@@ -5,3 +5,6 @@ jobs.db
 scraper.log
 scraper.log.1
 logs/
+
+# Debug HTML snapshots
+*.html

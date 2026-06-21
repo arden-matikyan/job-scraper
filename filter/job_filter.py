@@ -27,7 +27,7 @@ from typing import Optional
 
 from rich.progress import track
 
-from agent.ollama_client import OllamaClient
+from agent.llm import LLMClient
 from storage.job_store import JobStore
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ Respond with JSON only, no explanation:
 
 
 class JobFilter:
-    def __init__(self, store: JobStore, ollama: OllamaClient) -> None:
+    def __init__(self, store: JobStore, ollama: LLMClient) -> None:
         self.store = store
         self.ollama = ollama
 

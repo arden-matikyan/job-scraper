@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.table import Table
 
 from agent.job_extractor import JobExtractor
-from agent.ollama_client import OllamaClient
+from agent.llm import LLMClient, get_llm_client
 from agent.recon_agent import (
     PlatformKB,
     ReconAgent,
@@ -58,7 +58,7 @@ class RunResult:
 class Runner:
     def __init__(
         self,
-        ollama: Optional[OllamaClient] = None,
+        ollama: Optional[LLMClient] = None,
         store: Optional[JobStore] = None,
         kb: Optional[PlatformKB] = None,
         http: Optional[HttpClient] = None,
@@ -75,7 +75,7 @@ class Runner:
             max_retries=int(defaults.get("max_retries", 3)),
             user_agent=defaults.get("user_agent", DEFAULT_USER_AGENT),
         )
-        self.ollama = ollama or OllamaClient()
+        self.ollama = ollama or get_llm_client()
         self.store = store or JobStore()
         self.kb = kb or PlatformKB()
         self.recon = ReconAgent(http=self.http, ollama=self.ollama, kb=self.kb)
@@ -86,6 +86,9 @@ class Runner:
         # extraction across a bounded thread pool so multiple jobs hit the model
         # at once (set OLLAMA_NUM_PARALLEL on the server to actually parallelize).
         self.embed_jobs = bool(defaults.get("embed_jobs", True)) if embed_jobs is None else bool(embed_jobs)
+        # Providers without an embedding model (e.g. Claude) can't embed — skip it.
+        if getattr(self.ollama, "embed_model", None) is None:
+            self.embed_jobs = False
         self.extract_workers = (
             int(defaults.get("extract_workers", 4)) if extract_workers is None else int(extract_workers)
         )

@@ -13,6 +13,8 @@ from storage.job_store import JobStore
 
 
 class CountingOllama:
+    embed_model = "nomic-embed-text"  # an embedding-capable client (see Runner.embed_jobs)
+
     def __init__(self):
         self.generate_calls = 0
         self.embed_calls = 0
