@@ -39,11 +39,15 @@ Schema:
 }}
 
 Rules:
-- required_qualifications: each bullet/numbered item in a "Required" or "Minimum
-  Qualifications" section is one list entry. Preserve the full text of each item.
+- required_qualifications: each bullet/numbered item in a section whose header
+  implies requirements. Recognized headers (case-insensitive, partial match ok):
+  "Required", "Minimum Qualifications", "Basic Qualifications", "You Have",
+  "You'll Need", "What You Bring", "Must Have", "Qualifications".
+  Preserve the full text of each item.
   Include technical skills, tools, and languages found in required sections.
-- preferred_qualifications: same pattern for "Preferred" or "Desired" sections.
-  Include technical skills, tools, and languages found in preferred sections.
+- preferred_qualifications: same pattern for sections implying preferred/optional
+  items. Recognized headers: "Preferred", "Desired", "Nice to Have",
+  "Nice If You Have", "Bonus", "Plus", "Good to Have", "What Would Be Nice".
 - locations_all: if multiple locations are listed (e.g. "McLean, VA or Austin, TX"),
   capture all of them.
 
