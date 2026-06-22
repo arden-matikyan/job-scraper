@@ -151,7 +151,9 @@ phenom_api:
 freddiemac:
   headless: true           # no Cloudflare/WAF on careers.freddiemac.com
   max_jobs: 200            # total job cap (10/listing page)
+  max_pages: 30            # safety cap on UI "next page" clicks (stops early when a page adds nothing new)
+  sort_label: "Most recent"  # on-page sort; the default "Most relevant" returns a rotating random subset
   nav_timeout_ms: 45000
-  spa_wait_ms: 10000       # ms to wait after domcontentloaded for SPA to render jobs
+  spa_wait_ms: 10000       # ms to wait after navigation / sort / next-page for the SPA to re-render
   detail_wait_ms: 6000     # ms to wait on each job detail page
   profile_dir: "~/.job-scraper/browser-profile"
