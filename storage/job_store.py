@@ -131,7 +131,7 @@ class JobStore:
         Computes the dedup hash from company::title::source_url. Existing hashes
         are skipped and never updated.
         """
-        from scrapers.base import utcnow_iso
+        from scrapers.base import scraped_at_stamp
 
         company = record.get("company")
         title = record.get("title")
@@ -143,7 +143,7 @@ class JobStore:
 
         row = dict(record)
         row["hash"] = hash_value
-        row.setdefault("scraped_at", utcnow_iso())
+        row.setdefault("scraped_at", scraped_at_stamp())
         for field in _LIST_FIELDS:
             row[field] = json.dumps(row.get(field) or [])
         row["embedding"] = _embedding_to_blob(record.get("embedding"))
@@ -261,6 +261,19 @@ class JobStore:
                 self._conn.commit()
             except Exception as exc:
                 logger.error("update_filter_status failed for id=%s: %s", job_id, exc)
+
+    def delete_by_filter_status(self, status: str) -> int:
+        """Delete all jobs with the given filter_status. Returns rows deleted."""
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    "DELETE FROM jobs WHERE filter_status = ?", (status,)
+                )
+                self._conn.commit()
+                return cur.rowcount
+            except Exception as exc:
+                logger.error("delete_by_filter_status failed for %r: %s", status, exc)
+                return 0
 
     # --------------------------------------------------------------- recon log
     def log_recon(

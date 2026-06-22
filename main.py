@@ -200,10 +200,12 @@ def cmd_filter_jobs(
     company: str | None,
     limit: int | None,
     rerun: bool,
+    purge: bool = False,
 ) -> None:
     ollama = banner(console, require_llm=True)
     store = JobStore()
-    results = JobFilter(store, ollama).run(company=company, limit=limit, rerun=rerun)
+    job_filter = JobFilter(store, ollama)
+    results = job_filter.run(company=company, limit=limit, rerun=rerun)
     qualified = results["qualified"]
     not_qualified = results["not_qualified"]
 
@@ -241,6 +243,10 @@ def cmd_filter_jobs(
         f"[green]{len(qualified)} qualified[/], "
         f"[red]{len(not_qualified)} not qualified[/dim]"
     )
+
+    if purge:
+        deleted = job_filter.delete_not_qualified()
+        console.print(f"[red]Purged {deleted} not-qualified job(s) from the DB.[/]")
 
 
 def cmd_jobs(console: Console, search: str | None) -> None:
@@ -307,6 +313,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_filter.add_argument(
         "--rerun", action="store_true", help="re-evaluate already-filtered jobs"
     )
+    p_filter.add_argument(
+        "--purge", action="store_true",
+        help="delete not-qualified jobs from the DB after classifying",
+    )
     return parser
 
 
@@ -334,7 +344,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "jobs":
         cmd_jobs(console, args.search)
     elif args.command == "filter-jobs":
-        cmd_filter_jobs(console, args.company, args.limit, args.rerun)
+        cmd_filter_jobs(console, args.company, args.limit, args.rerun, args.purge)
 
 
 if __name__ == "__main__":

@@ -24,8 +24,13 @@ DEFAULT_USER_AGENT = (
 
 
 def utcnow_iso() -> str:
-    """UTC timestamp as an ISO-8601 'Z' string (used for scraped_at)."""
+    """UTC timestamp as an ISO-8601 'Z' string (used by the recon log)."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def scraped_at_stamp() -> str:
+    """UTC scrape timestamp formatted as DAY-MONTH-YEAR (e.g. 22-06-2026)."""
+    return datetime.now(timezone.utc).strftime("%d-%m-%Y")
 
 
 @dataclass
@@ -204,6 +209,39 @@ def extract_title(html: str) -> Optional[str]:
             return og["content"].strip()
     except Exception:
         pass
+    return None
+
+
+def parse_posted_date(raw: Optional[str]) -> Optional[str]:
+    """Normalise a posted-date string to ISO 'YYYY-MM-DD', or None.
+
+    Handles the common careers-site formats: ISO ('2026-05-12T00:00:00+0000'),
+    US slashes ('Date Posted: 04/28/2026' → MM/DD/YYYY), and abbreviated or full
+    month names ('Jun 10, 2026', 'June 10, 2026'). Any leading 'Date Posted:' /
+    'Posted:' label is stripped first. Returns None on anything unrecognised.
+    """
+    import re as _re
+    from datetime import datetime as _dt
+
+    if not raw:
+        return None
+    s = _re.sub(r"^\s*(?:date\s+)?posted\s*:?\s*", "", str(raw).strip(), flags=_re.I).strip()
+    if not s:
+        return None
+    # ISO 'YYYY-MM-DD' (optionally with time/zone) — take the date part.
+    m = _re.match(r"(\d{4})-(\d{2})-(\d{2})", s)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    # US 'MM/DD/YYYY'.
+    m = _re.search(r"(\d{1,2})/(\d{1,2})/(\d{4})", s)
+    if m:
+        return f"{m.group(3)}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
+    # 'Mon DD, YYYY' or 'Month DD, YYYY'.
+    for fmt in ("%b %d, %Y", "%B %d, %Y"):
+        try:
+            return _dt.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
     return None
 
 

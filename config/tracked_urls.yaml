@@ -51,5 +51,17 @@ companies:
   url: https://careers-lmi.icims.com/jobs/search?pr=0&searchKeyword=software&schemaId=&o=
   scraper_key: lmi
   notes: iCIMS (content iframe) behind AWS WAF; Playwright scraper, pr-paginated
-
+- name: SAIC
+  url: https://jobs.saic.com/search/jobs/in/country/united-states?q=software
+  scraper_key: saic
+  notes: Talemetry, Cloudflare managed challenge (headful browser scraper)
+- name: Publicis Groupe
+  url: https://careers.publicisgroupe.com/jobs?keywords=software&sortBy=relevance&page=1&location=United%20States&woe=12&regionCode=US&stretchUnit=MILES&stretch=10
+  scraper_key: phenom_api
+  notes: Phenom People public /api/jobs JSON (no browser); US-filtered via woe/regionCode
+- name: S&P Global
+  url: https://careers.spglobal.com/jobs?keywords=software&sortBy=relevance&page=1
+  scraper_key: phenom_api
+  notes: Phenom People public /api/jobs JSON (no browser)
+  
 

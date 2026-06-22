@@ -16,7 +16,7 @@ import os
 from typing import Any, Optional, Protocol, runtime_checkable
 
 # ---- pick your LLM here ----------------------------------------------------
-LLM_PROVIDER = "claude"  # "claude" | "ollama"
+LLM_PROVIDER = "ollama"  # "claude" | "ollama"
 # ---------------------------------------------------------------------------
 
 

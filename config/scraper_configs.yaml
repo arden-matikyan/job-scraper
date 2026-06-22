@@ -32,24 +32,31 @@ title_exclude:
   - "L6"
   - "Civil"
 
+
 # Keyword pre-filter (pipeline-level): a NEW job whose title contains none of these
 # (case-insensitive substring) is skipped BEFORE any LLM extraction.
 # Set to [] to disable (process everything). Override per-run with `run --keywords`.
 keyword_filter:
   - software
   - developer
-  - engineer
+  - Data
   - scientist
   - architect
   - " ai "
   - " ml "
+  - SWE 
+  - SW 
   - machine learning
   - artificial intelligence
   - generative
   - full stack
   - fullstack
+  - full-stack
   - backend
+  - back end 
   - back-end
+  - systems
+  - system
 
 greenhouse_api:
   content: true
@@ -121,6 +128,16 @@ lmi:
   nav_timeout_ms: 45000
   spa_wait_ms: 2500        # ms to wait after navigation for the content iframe to render
   profile_dir: "~/.job-scraper/browser-profile"
+
+saic:
+  headless: false          # jobs.saic.com is behind Cloudflare's managed
+                           # challenge — a headful browser is required to clear it.
+  max_pages: 50            # listing pages to walk (25 jobs each); stops early when empty
+  nav_timeout_ms: 60000
+  profile_dir: "~/.job-scraper/browser-profile"
+
+phenom_api:
+  max_pages: 300           # 10 jobs/page; stops early at totalCount
 
 freddiemac:
   headless: true           # no Cloudflare/WAF on careers.freddiemac.com

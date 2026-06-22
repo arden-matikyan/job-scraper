@@ -105,6 +105,15 @@ class JobFilter:
 
         return {"qualified": qualified, "not_qualified": not_qualified}
 
+    def delete_not_qualified(self) -> int:
+        """Delete all jobs previously classified as not_qualified.
+
+        Returns the number of rows removed.
+        """
+        deleted = self.store.delete_by_filter_status("not_qualified")
+        logger.info("Deleted %d not_qualified jobs", deleted)
+        return deleted
+
     # --------------------------------------------------------------- private
 
     def _check_experience(self, job: dict) -> Optional[str]:
