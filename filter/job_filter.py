@@ -46,7 +46,7 @@ _CLEARANCE_TERMS = re.compile(
 
 _CLEARANCE_PROMPT = """\
 You are a job screener. Given the required qualifications listed below, answer:
-Does this role REQUIRE an active security clearance (Secret, Top Secret, TS/SCI, or similar)?
+Does this role REQUIRE an active or current security clearance (Secret, Top Secret, TS/SCI, Poly or similar)?
 
 Rules:
 - Only answer true if clearance is explicitly REQUIRED, not just preferred or mentioned.

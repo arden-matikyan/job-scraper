@@ -5,6 +5,7 @@
     python main.py recon <url>              run the recon agent on a single URL
     python main.py add <url>                recon a URL, then save it to tracked_urls.yaml
     python main.py jobs [--search "..."]    print recent / matching jobs from the DB
+    python main.py reextract --ids 6531     re-run LLM extraction on specific DB rows
 
 Every command logs registered scrapers + tracked-URL count and checks LLM health
 on startup. The LLM provider is selected in agent/llm.py (Claude or Ollama).
@@ -249,6 +250,80 @@ def cmd_filter_jobs(
         console.print(f"[red]Purged {deleted} not-qualified job(s) from the DB.[/]")
 
 
+def cmd_reextract(
+    console: Console,
+    ids: list[int] | None,
+    all_rows: bool,
+    dry_run: bool,
+) -> None:
+    import json as _json
+
+    ollama = banner(console, require_llm=True)
+    store = JobStore()
+
+    if all_rows:
+        rows = store.get_jobs()
+    else:
+        rows = [r for i in (ids or []) if (r := store.get_job_by_id(i)) is not None]
+        missing = [i for i in (ids or []) if store.get_job_by_id(i) is None]
+        if missing:
+            console.print(f"[yellow]Row IDs not found: {missing}[/]")
+
+    if not rows:
+        console.print("[yellow]No rows to re-extract.[/]")
+        return
+
+    from agent.job_extractor import JobExtractor
+    extractor = JobExtractor(ollama)
+
+    # Fields to pass as hints from the existing row (scraper-authoritative values win).
+    HINT_KEYS = ("job_id", "title", "company", "location", "locations_all", "posted_date")
+
+    updated = failed = unchanged = 0
+    for row in rows:
+        row_id = row["id"]
+        raw_text = row.get("description_full") or ""
+        source_url = row.get("source_url") or ""
+        hints = {k: row[k] for k in HINT_KEYS if row.get(k) not in (None, "", [])}
+
+        try:
+            new = extractor.extract(raw_text, source_url, hints=hints)
+        except Exception as exc:
+            console.print(f"[red]id={row_id}: extraction error: {exc}[/]")
+            failed += 1
+            continue
+
+        old_req = row.get("required_qualifications") or []
+        old_pref = row.get("preferred_qualifications") or []
+        new_req = new.get("required_qualifications") or []
+        new_pref = new.get("preferred_qualifications") or []
+
+        changed = (old_req != new_req) or (old_pref != new_pref)
+
+        if dry_run:
+            if changed:
+                console.print(f"\n[bold]id={row_id}[/] {row.get('title')} @ {row.get('company')}")
+                console.print(f"  [red]required (old)[/]: {_json.dumps(old_req, indent=2)}")
+                console.print(f"  [green]required (new)[/]: {_json.dumps(new_req, indent=2)}")
+                console.print(f"  [red]preferred (old)[/]: {_json.dumps(old_pref, indent=2)}")
+                console.print(f"  [green]preferred (new)[/]: {_json.dumps(new_pref, indent=2)}")
+                updated += 1
+            else:
+                unchanged += 1
+        else:
+            if changed:
+                store.update_extraction(row_id, new)
+                updated += 1
+            else:
+                unchanged += 1
+
+    label = "Would update" if dry_run else "Updated"
+    console.print(
+        f"\n[dim]{label} {updated}, unchanged {unchanged}, failed {failed}[/]"
+        + (" [yellow](dry-run — no writes)[/]" if dry_run else "")
+    )
+
+
 def cmd_jobs(console: Console, search: str | None) -> None:
     banner(console, require_llm=False)
     store = JobStore()
@@ -317,6 +392,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--purge", action="store_true",
         help="delete not-qualified jobs from the DB after classifying",
     )
+    p_reex = sub.add_parser(
+        "reextract",
+        help="re-run LLM extraction on existing DB rows using stored description_full",
+    )
+    p_reex_group = p_reex.add_mutually_exclusive_group(required=True)
+    p_reex_group.add_argument(
+        "--ids", type=int, nargs="+", metavar="ID",
+        help="one or more row IDs to re-extract",
+    )
+    p_reex_group.add_argument(
+        "--all", action="store_true", dest="all_rows",
+        help="re-extract every row in the DB",
+    )
+    p_reex.add_argument(
+        "--dry-run", action="store_true",
+        help="print before/after diffs without writing to the DB",
+    )
     return parser
 
 
@@ -345,6 +437,8 @@ def main(argv: list[str] | None = None) -> None:
         cmd_jobs(console, args.search)
     elif args.command == "filter-jobs":
         cmd_filter_jobs(console, args.company, args.limit, args.rerun, args.purge)
+    elif args.command == "reextract":
+        cmd_reextract(console, args.ids, args.all_rows, args.dry_run)
 
 
 if __name__ == "__main__":

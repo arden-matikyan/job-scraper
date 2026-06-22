@@ -218,6 +218,37 @@ class JobStore:
             cur = self._conn.execute("SELECT COUNT(*) AS n FROM jobs")
             return int(cur.fetchone()["n"])
 
+    def get_job_by_id(self, job_id: int) -> Optional[dict]:
+        with self._lock:
+            cur = self._conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,))
+            rows = cur.fetchall()
+        result = self._rows_to_dicts(rows)
+        return result[0] if result else None
+
+    _EXTRACTION_COLS = frozenset((
+        "required_qualifications", "preferred_qualifications",
+        "title", "company", "location", "locations_all", "posted_date",
+    ))
+
+    def update_extraction(self, job_id: int, fields: dict) -> None:
+        """Overwrite LLM-extracted columns for an existing row. Never touches metadata."""
+        cols = {k: v for k, v in fields.items() if k in self._EXTRACTION_COLS}
+        if not cols:
+            return
+        for k in ("required_qualifications", "preferred_qualifications", "locations_all"):
+            if k in cols and isinstance(cols[k], list):
+                cols[k] = json.dumps(cols[k])
+        set_clause = ", ".join(f"{k} = ?" for k in cols)
+        with self._lock:
+            try:
+                self._conn.execute(
+                    f"UPDATE jobs SET {set_clause} WHERE id = ?",
+                    (*cols.values(), job_id),
+                )
+                self._conn.commit()
+            except Exception as exc:
+                logger.error("update_extraction failed for id=%s: %s", job_id, exc)
+
     # --------------------------------------------------------------- filtering
 
     def get_jobs_for_filter(
