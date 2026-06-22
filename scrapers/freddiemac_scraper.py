@@ -150,6 +150,10 @@ class FreddieMacScraper(BaseScraper):
 
     @staticmethod
     def _page_url(base: str, keywords: str, offset: int) -> str:
+        # Mirror the site's own pagination exactly: page 1 is the BASE url (no `from`);
+        # pages 2+ add from=10, from=20, … The SPA's no-`from` landing IS the real
+        # first page — explicitly sending from=0 returns a different view and skips
+        # those listings. (Listing cards lazy-render, so _listing_page scrolls.)
         params: dict = {"keywords": keywords, "s": "1"}
         if offset:
             params["from"] = offset
@@ -162,6 +166,12 @@ class FreddieMacScraper(BaseScraper):
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=nav_timeout)
             page.wait_for_timeout(spa_wait_ms)
+            # Scroll through the page so the SPA renders all job cards — Phenom People
+            # uses virtual/lazy rendering and only mounts cards that enter the viewport.
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            page.wait_for_timeout(1500)
+            page.evaluate("window.scrollTo(0, 0)")
+            page.wait_for_timeout(500)
         except Exception as exc:
             self.log.warning("FreddieMac listing nav failed for %s: %s", url, exc)
 

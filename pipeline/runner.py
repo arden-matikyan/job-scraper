@@ -66,6 +66,7 @@ class Runner:
         console: Optional[Console] = None,
         embed_jobs: Optional[bool] = None,
         extract_workers: Optional[int] = None,
+        company_workers: Optional[int] = None,
         keyword_filter: Optional[list[str]] = None,
     ):
         self.scraper_configs = scraper_configs if scraper_configs is not None else load_scraper_configs()
@@ -92,37 +93,64 @@ class Runner:
         self.extract_workers = (
             int(defaults.get("extract_workers", 4)) if extract_workers is None else int(extract_workers)
         )
+        # Company-level parallelism: run _run_one() across companies in a thread
+        # pool. 1 = sequential. JobStore is lock-guarded and the HTTP/LLM clients
+        # are thread-safe, so concurrent company runs are safe; stdout lines from
+        # parallel companies interleave (the summary table at the end is clean).
+        self.company_workers = (
+            int(defaults.get("company_workers", 1)) if company_workers is None else int(company_workers)
+        )
         # Keyword pre-filter: a NEW job whose title/description contains none of
         # these (case-insensitive substring) is skipped before any LLM work. Empty
         # list disables it. Default comes from scraper_configs top-level keyword_filter.
         _kw = keyword_filter if keyword_filter is not None else ((self.scraper_configs or {}).get("keyword_filter") or [])
         self.keyword_filter = [str(k).lower() for k in _kw if str(k).strip()]
-        # Title hard-exclude: jobs whose title contains any of these whole words
-        # (case-insensitive) are dropped before any LLM work.
+        # Title hard-exclude: jobs whose title contains any of these whole words are
+        # dropped before any LLM work. `title_exclude` terms match case-insensitively;
+        # `title_exclude_cs` terms match case-sensitively (e.g. "IV", "L3" — so they
+        # don't fire on lowercase "iv"/"l3"). Both go into one pattern: the
+        # case-sensitive terms are wrapped in a scoped (?-i:...) flag.
         _te = (self.scraper_configs or {}).get("title_exclude") or []
+        _te_cs = (self.scraper_configs or {}).get("title_exclude_cs") or []
+        _alts = [re.escape(str(t)) for t in _te if str(t).strip()]
+        _alts += [f"(?-i:{re.escape(str(t))})" for t in _te_cs if str(t).strip()]
         self._title_exclude_pattern = (
-            re.compile(
-                r"\b(?:" + "|".join(re.escape(str(t)) for t in _te if str(t).strip()) + r")\b",
-                re.IGNORECASE,
-            )
-            if _te
+            re.compile(r"\b(?:" + "|".join(_alts) + r")\b", re.IGNORECASE)
+            if _alts
             else None
         )
 
     # ------------------------------------------------------------------- run
     def run(self, entries: list[dict]) -> list[RunResult]:
         results: list[RunResult] = []
-        for entry in entries or []:
-            if entry.get("skip"):
-                name = entry.get("name", "?")
-                self.console.print(f"[dim]-- {name} skipped (skip: true)[/]")
-                continue
-            try:
-                results.append(self._run_one(entry))
-            except Exception as exc:  # a company failure never aborts the run
-                name = entry.get("name", "?")
-                logger.error("Unexpected failure for %s: %s", name, exc)
-                results.append(RunResult(name, entry.get("url", ""), None, 0, 0, 0, 0.0, "ERROR"))
+        active = [e for e in (entries or []) if not e.get("skip")]
+        skipped = [e for e in (entries or []) if e.get("skip")]
+        for entry in skipped:
+            self.console.print(f"[dim]-- {entry.get('name', '?')} skipped (skip: true)[/]")
+
+        if self.company_workers <= 1 or len(active) <= 1:
+            for entry in active:
+                try:
+                    results.append(self._run_one(entry))
+                except Exception as exc:  # a company failure never aborts the run
+                    name = entry.get("name", "?")
+                    logger.error("Unexpected failure for %s: %s", name, exc)
+                    results.append(RunResult(name, entry.get("url", ""), None, 0, 0, 0, 0.0, "ERROR"))
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            futures = {}
+            with ThreadPoolExecutor(max_workers=self.company_workers, thread_name_prefix="company") as pool:
+                for entry in active:
+                    futures[pool.submit(self._run_one, entry)] = entry
+                for fut in as_completed(futures):
+                    entry = futures[fut]
+                    name = entry.get("name", "?")
+                    try:
+                        results.append(fut.result())
+                    except Exception as exc:  # a company failure never aborts the run
+                        logger.error("Unexpected failure for %s: %s", name, exc)
+                        results.append(RunResult(name, entry.get("url", ""), None, 0, 0, 0, 0.0, "ERROR"))
+
         self._print_summary(results)
         return results
 
@@ -190,12 +218,19 @@ class Runner:
             return "duplicate"
 
         # Title hard-exclude: drop seniority/management titles before any LLM work.
-        if self._title_exclude_pattern and self._title_excluded(raw):
-            return "filtered"
+        title = getattr(raw, "title", "") or ""
+        if self._title_exclude_pattern:
+            m = self._title_exclude_pattern.search(title)
+            if m:
+                logger.info("FILTERED (title-exclude '%s'): %r — %s",
+                            m.group(0), title, getattr(raw, "source_url", ""))
+                return "filtered"
 
         # Keyword pre-filter: skip the LLM entirely for a NEW job whose listing
         # (title + description) mentions none of the configured keywords.
         if self.keyword_filter and not self._matches_keywords(raw):
+            logger.info("FILTERED (no keyword match): %r — %s",
+                        title, getattr(raw, "source_url", ""))
             return "filtered"
 
         hints = raw.authoritative_fields()
@@ -212,10 +247,6 @@ class Runner:
             self.ollama.embed(emb_text[:_EMBED_CHARS]) if (self.embed_jobs and emb_text) else None
         )
         return "new" if self.store.save_job(record) else "duplicate"
-
-    def _title_excluded(self, raw) -> bool:
-        title = getattr(raw, "title", "") or ""
-        return bool(self._title_exclude_pattern and self._title_exclude_pattern.search(title))
 
     def _matches_keywords(self, raw) -> bool:
         title = f" {(getattr(raw, 'title', '') or '').lower()} "

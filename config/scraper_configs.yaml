@@ -8,6 +8,7 @@ defaults:
   embed_jobs: true        # compute the (currently unused) nomic embedding per job; false skips it for speed
   extract_workers: 4      # concurrent llama3.2 extraction workers (1 = sequential).
                           # For real parallelism also start Ollama with OLLAMA_NUM_PARALLEL>=this value.
+  company_workers: 3      # parallel company scrapers; 1 = sequential (safe default for WAF-sensitive sites)
 
 # Title hard-exclude filter (pipeline-level): a NEW job whose title contains any of
 # these terms (whole-word, case-insensitive) is dropped BEFORE any LLM extraction.
@@ -23,14 +24,24 @@ title_exclude:
   - Sr.
   - Senior
   - Director
-  - "3"
-  - "4" 
-  - "5"
+  # NOTE: bare numeric/level tokens ("3","4","5","L3"–"L6") were removed on purpose.
+  # As whole words they discarded valid early-career roles (e.g. "Software Engineer 3"),
+  # and we'd rather keep a false positive than drop a real job. Genuine senior roles are
+  # still caught downstream by the experience filter (">=3 years required").
+  - "Level III"
+  - "III"
+  - "Civil"
+
+# Case-SENSITIVE title hard-exclude: same whole-word matching as title_exclude, but
+# the term must match exactly as written (so "IV" fires on "Engineer IV" but not on a
+# lowercase "iv", and "L3" won't match "l3"). Use this for short uppercase level codes
+# / roman numerals where a case-insensitive match would cause false positives.
+title_exclude_cs:
+  - "IV"
   - "L3"
   - "L4"
   - "L5"
   - "L6"
-  - "Civil"
 
 
 # Keyword pre-filter (pipeline-level): a NEW job whose title contains none of these

@@ -83,7 +83,8 @@ def banner(console: Console, require_llm: bool = True) -> LLMClient:
 
 
 def cmd_run(console: Console, no_embed: bool = False, workers: int | None = None,
-            keywords: str | None = None, company: str | None = None) -> None:
+            keywords: str | None = None, company: str | None = None,
+            company_workers: int | None = None) -> None:
     ollama = banner(console, require_llm=True)
     entries = load_tracked_urls().get("companies", []) or []
     if not entries:
@@ -102,10 +103,12 @@ def cmd_run(console: Console, no_embed: bool = False, workers: int | None = None
         embed_jobs=(False if no_embed else None),
         extract_workers=workers,
         keyword_filter=kw,
+        company_workers=company_workers,
     )
     console.print(
         f"[dim]run mode: embeddings {'OFF' if not runner.embed_jobs else 'on'}, "
         f"{runner.extract_workers} extraction worker(s), "
+        f"{runner.company_workers} company worker(s), "
         f"keyword filter: {', '.join(runner.keyword_filter) if runner.keyword_filter else 'off'}[/]"
     )
     runner.run(entries)
@@ -366,6 +369,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="skip per-job embeddings for a faster bulk run (they're unused today)")
     p_run.add_argument("--workers", type=int, default=None,
                        help="concurrent extraction workers (default from config; 1 = sequential)")
+    p_run.add_argument("--company-workers", type=int, default=None,
+                       help="parallel company scrapers (default from config; 1 = sequential)")
     p_run.add_argument("--keywords", default=None,
                        help='comma-separated keyword filter override (e.g. "software,engineer"); '
                             'pass an empty string to disable filtering')
@@ -424,7 +429,7 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "run":
         cmd_run(console, no_embed=args.no_embed, workers=args.workers, keywords=args.keywords,
-                company=args.company)
+                company=args.company, company_workers=args.company_workers)
     elif args.command == "watch":
         cmd_watch(console)
     elif args.command == "recon":

@@ -32,9 +32,12 @@ from storage.job_store import JobStore
 
 logger = logging.getLogger(__name__)
 
-# Matches "3+ years", "5 or more years", "3-5+ years" (takes lower bound), etc.
+# Matches an experience requirement and captures the LOWER bound of any range:
+# "3+ years" -> 3, "3-5 years" -> 3, "1-3 years" -> 1 (kept), "5 or more years" -> 5,
+# "1 to 3 years" -> 1. The first number before "years" is always the lower bound, so
+# capture it directly instead of requiring it to be >=3 (which mis-read "1-3" as "3").
 _EXP_RE = re.compile(
-    r'\b([3-9]\d*|\d{2,})\s*[-–]?\s*(?:\d+\+?)?\s*\+?\s*(?:or\s+more\s+)?years?\b',
+    r'\b(\d+(?:\.\d+)?)\s*\+?\s*(?:[-–]|to)?\s*(?:\d+\+?)?\s*(?:or\s+more\s+)?years?\b',
     re.I,
 )
 
@@ -128,11 +131,11 @@ class JobFilter:
             m = _EXP_RE.search(text)
             if m:
                 try:
-                    years = int(m.group(1))
+                    years = float(m.group(1))
                 except ValueError:
                     continue
                 if years >= 3:
-                    return f"{years}+ years of experience required"
+                    return f"{years:g}+ years of experience required"
 
         return None
 
