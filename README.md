@@ -1,6 +1,14 @@
 # job-scraper
 
-Local-first agentic job scraper. Uses Ollama (llama3.2 + nomic-embed-text) to extract and store job listings from tracked company career pages.
+Vibe coded to build company specicific scrapers. 
+
+Local-first job scraper. Uses Ollama (llama3.2 + nomic-embed-text) to extract and store job listings from tracked company career pages.
+
+Includes filtering at scrape level and DB level. 
+
+TODO: 
+Deploy on AWS to have automatic daily runs. 
+Further enable agentic capabiltiy so scraper can be built, tested and deployed automatically from single URL input of new job board. 
 
 ## Prerequisites
 
