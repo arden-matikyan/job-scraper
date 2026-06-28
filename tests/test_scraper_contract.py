@@ -13,6 +13,7 @@ No live network is used here.
 from __future__ import annotations
 
 import inspect
+from urllib.parse import urlparse
 
 import pytest
 
@@ -21,7 +22,7 @@ from scrapers.base import BaseScraper, RawJob
 
 EXPECTED_KEYS = {
     "greenhouse_api", "lever_api", "smartrecruiters", "workday",
-    "icims", "avature", "static_html", "javascript_rendered",
+    "icims", "avature", "static_html", "javascript_rendered", "afs", "elastic",
 }
 
 
@@ -29,11 +30,12 @@ EXPECTED_KEYS = {
 # Fake HTTP client
 # --------------------------------------------------------------------------- #
 class FakeResponse:
-    def __init__(self, text="", json_data=None, status_code=200, url=""):
+    def __init__(self, text="", json_data=None, status_code=200, url="", cookies=None):
         self._text = text
         self._json = json_data
         self.status_code = status_code
         self.url = url
+        self.cookies = cookies or {}
 
     @property
     def text(self):
@@ -238,6 +240,167 @@ def test_avature_smoke():
     assert_valid_job(job, "avature")
     assert job.job_id == "55"
     assert "Do things" in job.raw_text
+
+
+def test_afs_smoke():
+    from scrapers.afs_scraper import AFSScraper
+
+    page = (
+        '<html><script>$A.initConfig({"fwuid":"FW123",'
+        '"loaded":{"APPLICATION@markup://siteforce:communityApp":"TOK456"}})'
+        "</script></html>"
+    )
+    aura_resp = {"actions": [{"state": "SUCCESS", "returnValue": {"returnValue": {
+        "isError": False, "statusCode": 200, "totalResults": 1, "responseLst": [{
+            "id": 999, "jobId": "7828", "title": "Software Engineer ",
+            "location": {"name": "Washington, DC"},
+            "offices": [{"name": "Washington, DC"}, {"name": "Remote - US"}],
+            "jobUrl": "https://boards.greenhouse.io/accenturefederalservices/jobs/999?gh_jid=999#app",
+            "jobContent": "<p>Build <b>things</b>. 2+ years.</p>",
+            "clearance": [
+                {"name": "Clearance Level", "value": "Secret", "value_type": "single_select"},
+                {"name": "Job Category", "value": ["Cyber"], "value_type": "multi_select"},
+            ],
+        }],
+    }}}]}
+    http = FakeHttpClient(
+        text_routes=[(lambda u: "search-jobs" in u, page)],
+        json_routes=[(lambda u: "sfsites/aura" in u, aura_resp)],
+    )
+    jobs = list(AFSScraper(http=http).scrape(
+        "https://smartafs.my.site.com/careers/s/search-jobs", "Accenture Federal Services"))
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert_valid_job(job, "afs")
+    assert job.job_id == "999"
+    assert job.title == "Software Engineer"
+    assert job.location == "Washington, DC"
+    assert job.locations_all == ["Washington, DC", "Remote - US"]
+    assert "Build things" in job.raw_text          # HTML unescaped + stripped
+    assert "Clearance Level: Secret" in job.raw_text  # custom fields appended
+    assert "Job Category: Cyber" in job.raw_text
+
+
+def test_afs_skips_seen_url():
+    from scrapers.afs_scraper import AFSScraper
+
+    page = (
+        '<html><script>x={"fwuid":"FW",'
+        '"loaded":{"APPLICATION@markup://siteforce:communityApp":"TOK"}}</script></html>'
+    )
+    aura_resp = {"actions": [{"state": "SUCCESS", "returnValue": {"returnValue": {
+        "isError": False, "totalResults": 1, "responseLst": [{
+            "id": 999, "title": "Software Engineer", "location": {"name": "DC"},
+            "jobUrl": "https://boards.greenhouse.io/accenturefederalservices/jobs/999?gh_jid=999#app",
+            "jobContent": "SHOULD NOT MATTER",
+        }],
+    }}}]}
+    http = FakeHttpClient(
+        text_routes=[(lambda u: "search-jobs" in u, page)],
+        json_routes=[(lambda u: "sfsites/aura" in u, aura_resp)],
+    )
+    scraper = AFSScraper(http=http)
+    scraper.seen_urls = {
+        "https://boards.greenhouse.io/accenturefederalservices/jobs/999?gh_jid=999#app"
+    }
+    jobs = list(scraper.scrape(
+        "https://smartafs.my.site.com/careers/s/search-jobs", "AFS"))
+    assert len(jobs) == 1
+    assert jobs[0].already_seen is True
+    assert jobs[0].raw_text == ""
+    assert jobs[0].job_id == "999"
+    assert jobs[0].title == "Software Engineer"
+
+
+def _elastic_fixtures(content="Build distributed systems. 8+ years."):
+    page = FakeResponse(text="<html></html>", cookies={"XSRF-TOKEN": "tok%3D%3D"})
+    api_resp = {
+        "meta": {"page": {"current": 1, "total_pages": 1, "total_results": 1}},
+        "results": [{
+            "title": {"raw": "Principal Software Engineer "},
+            "content": {"raw": content},
+            "location": {"raw": "United States"},
+            "hybrid_locations": {"raw": "San Francisco, CA; Remote - US"},
+            "subdivision": {"raw": "Engineering"},
+            "category": {"raw": "Engineering"},
+            "job_type": {"raw": "Remote"},
+            "req_id": {"raw": "8000999"},
+            "url": {"raw": "engineering/united-states/principal-software-engineer/8000999"},
+            "created_at": {"raw": "2026-06-24T15:05:55+00:00"},
+        }],
+    }
+    http = FakeHttpClient(
+        resp_routes=[(lambda u: "/jobs/" in u, page)],
+        json_routes=[(lambda u: "/api/appSearch" in u, api_resp)],
+    )
+    return http
+
+
+def test_elastic_smoke():
+    from scrapers.elastic_scraper import ElasticScraper
+
+    http = _elastic_fixtures()
+    jobs = list(ElasticScraper(http=http).scrape(
+        "https://jobs.elastic.co/jobs/department/engineering"
+        "?filters%5B0%5D%5Bfield%5D=location"
+        "&filters%5B0%5D%5Bvalues%5D%5B0%5D=United%20States"
+        "&filters%5B0%5D%5Btype%5D=any", "Elastic"))
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert_valid_job(job, "elastic")
+    assert job.job_id == "8000999"
+    assert job.title == "Principal Software Engineer"  # trimmed
+    assert job.source_url == (
+        "https://jobs.elastic.co/jobs/engineering/united-states/"
+        "principal-software-engineer/8000999")
+    assert job.location == "United States"
+    assert job.locations_all == ["United States", "San Francisco, CA", "Remote - US"]
+    assert job.posted_date == "2026-06-24"
+    assert job.platform == "greenhouse"
+    assert "Build distributed systems" in job.raw_text
+    assert "Department: Engineering" in job.raw_text  # facet fields appended
+
+
+def test_elastic_filter_parsing():
+    from scrapers.elastic_scraper import ElasticScraper
+
+    p = urlparse(
+        "https://jobs.elastic.co/jobs/department/engineering"
+        "?filters%5B0%5D%5Bfield%5D=location"
+        "&filters%5B0%5D%5Bvalues%5D%5B0%5D=United%20States"
+        "&filters%5B0%5D%5Btype%5D=any")
+    filters = ElasticScraper._parse_filters(p)
+    # department -> subdivision value filter (path), plus the location query filter
+    assert {"any": [{"subdivision": "Engineering"}]} in filters
+    assert {"any": [{"location": "United States"}]} in filters
+
+
+def test_elastic_no_token_yields_nothing():
+    from scrapers.elastic_scraper import ElasticScraper
+
+    page = FakeResponse(text="<html></html>", cookies={})  # no XSRF-TOKEN
+    http = FakeHttpClient(resp_routes=[(lambda u: True, page)])
+    jobs = list(ElasticScraper(http=http).scrape(
+        "https://jobs.elastic.co/jobs/department/engineering", "Elastic"))
+    assert jobs == []
+
+
+def test_elastic_skips_seen_url():
+    from scrapers.elastic_scraper import ElasticScraper
+
+    http = _elastic_fixtures(content="SHOULD NOT MATTER")
+    scraper = ElasticScraper(http=http)
+    scraper.seen_urls = {
+        "https://jobs.elastic.co/jobs/engineering/united-states/"
+        "principal-software-engineer/8000999"
+    }
+    jobs = list(scraper.scrape(
+        "https://jobs.elastic.co/jobs/department/engineering", "Elastic"))
+    assert len(jobs) == 1
+    assert jobs[0].already_seen is True
+    assert jobs[0].raw_text == ""
+    assert jobs[0].job_id == "8000999"
+    assert jobs[0].title == "Principal Software Engineer"
 
 
 def test_static_html_smoke():

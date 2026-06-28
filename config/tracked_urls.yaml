@@ -63,5 +63,14 @@ companies:
   url: https://careers.spglobal.com/jobs?keywords=software&sortBy=relevance&page=1
   scraper_key: phenom_api
   notes: Phenom People public /api/jobs JSON (no browser)
-  
+- name: AFS
+  url: https://smartafs.my.site.com/careers/s/search-jobs
+  scraper_key: afs
+  keywords: software
+  notes: Salesforce Experience Cloud (Aura) + Greenhouse; guest Apex getJobBoard JSON (no browser)
+- name: Elastic
+  url: https://jobs.elastic.co/jobs/department/engineering?size=n_20_n&filters%5B0%5D%5Bfield%5D=location&filters%5B0%5D%5Bvalues%5D%5B0%5D=United%20States&filters%5B0%5D%5Btype%5D=any
+  scraper_key: elastic
+  notes: Laravel SPA + Elastic App Search via same-origin /api/appSearch proxy (CSRF token); Greenhouse-backed, no browser
+
 

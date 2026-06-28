@@ -8,3 +8,5 @@ logs/
 
 # Debug HTML snapshots
 *.html
+
+.env
