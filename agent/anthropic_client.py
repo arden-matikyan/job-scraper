@@ -98,6 +98,33 @@ class AnthropicClient:
             return default
         return parsed
 
+    # ----------------------------------------------------------------- tool use
+    def complete(
+        self,
+        messages: list[dict],
+        tools: Optional[list[dict]] = None,
+        system: Optional[str] = None,
+        max_tokens: Optional[int] = None,
+    ):
+        """Low-level Messages API call used by the agentic ToolRunner (tool use).
+
+        Returns the raw anthropic response (``.content`` blocks + ``.stop_reason``)
+        so the runner can parse ``tool_use`` blocks. Unlike :meth:`generate_json`
+        this does not swallow errors — the runner needs to see a failed turn — and
+        it is only ever called by the standalone agent scripts, never the pipeline.
+        Keeping the SDK call here means no anthropic SDK usage leaks outside this file.
+        """
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": max_tokens or self.max_tokens,
+            "messages": messages,
+        }
+        if system:
+            kwargs["system"] = system
+        if tools:
+            kwargs["tools"] = tools
+        return self._client.messages.create(**kwargs)
+
     # ------------------------------------------------------------- embeddings
     def embed(self, text: str) -> Optional[list[float]]:
         """Claude has no embeddings API; embeddings are skipped under this provider."""
