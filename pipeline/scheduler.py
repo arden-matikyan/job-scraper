@@ -1,9 +1,9 @@
 """Scheduler: run the full pipeline on an interval, and react to new tracked URLs.
 
 Uses APScheduler's BlockingScheduler at ``run_interval_hours`` (default 6) from
-tracked_urls.yaml. A watchdog observer on tracked_urls.yaml runs non-interactive
-recon for any newly added URLs between scheduled ticks. All scheduled work is
-non-interactive (recon NEEDS_ATTENTION URLs are skipped + logged, never blocking).
+tracked_urls.yaml. A watchdog observer on tracked_urls.yaml scrapes any newly added
+URLs between scheduled ticks. Entries without a pinned ``scraper_key`` are skipped +
+logged by the runner, never blocking.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Optional
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 
-from agent.recon_agent import config_path
+from config_io import config_path
 from pipeline.runner import Runner, load_tracked_urls
 
 logger = logging.getLogger(__name__)
@@ -55,10 +55,10 @@ class PipelineScheduler:
         new_entries = [e for e in entries if e.get("url") and e["url"] not in self._known_urls]
         if not new_entries:
             return
-        logger.info("Detected %d new tracked URL(s); running recon+scrape", len(new_entries))
+        logger.info("Detected %d new tracked URL(s); scraping", len(new_entries))
         for e in new_entries:
             self._known_urls.add(e["url"])
-        self.runner.run(new_entries, interactive=False)
+        self.runner.run(new_entries)
 
     # ------------------------------------------------------------------ start
     def start(self, run_immediately: bool = True) -> None:

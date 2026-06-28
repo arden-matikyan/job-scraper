@@ -2,9 +2,8 @@
 
     python main.py run                      run the pipeline once for all tracked URLs
     python main.py watch                    run once, then schedule on an interval
-    python main.py recon <url>              run the recon agent on a single URL
-    python main.py add <url>                recon a URL, then save it to tracked_urls.yaml
     python main.py jobs [--search "..."]    print recent / matching jobs from the DB
+    python main.py filter-jobs              classify saved jobs as qualified / not
     python main.py reextract --ids 6531     re-run LLM extraction on specific DB rows
 
 Every command logs registered scrapers + tracked-URL count and checks LLM health
@@ -20,12 +19,11 @@ import os
 import sys
 from logging.handlers import RotatingFileHandler
 
-import yaml
 from rich.console import Console
 from rich.table import Table
 
 from agent.llm import LLMClient, get_llm_client, resolve_provider
-from agent.recon_agent import PlatformKB, ReconAgent, ReconStatus, config_path, project_root
+from config_io import project_root
 from filter.job_filter import JobFilter
 from pipeline.runner import Runner, load_tracked_urls
 from pipeline.scheduler import PipelineScheduler
@@ -88,7 +86,7 @@ def cmd_run(console: Console, no_embed: bool = False, workers: int | None = None
     ollama = banner(console, require_llm=True)
     entries = load_tracked_urls().get("companies", []) or []
     if not entries:
-        console.print("[yellow]No tracked URLs. Add one with `python main.py add <url>`.[/]")
+        console.print("[yellow]No tracked URLs. Add one in config/tracked_urls.yaml (with a scraper_key).[/]")
         return
     if company:
         entries = [e for e in entries if (e.get("name") or "").lower() == company.lower()]
@@ -117,86 +115,6 @@ def cmd_run(console: Console, no_embed: bool = False, workers: int | None = None
 def cmd_watch(console: Console) -> None:
     ollama = banner(console, require_llm=True)
     PipelineScheduler(Runner(ollama=ollama)).start(run_immediately=True)
-
-
-def cmd_recon(console: Console, url: str) -> None:
-    ollama = banner(console, require_llm=True)
-    agent = ReconAgent(ollama=ollama)
-    res = agent.investigate(url)
-    _print_recon(console, res)
-
-
-def cmd_recon_pending(console: Console) -> None:
-    # Ollama is optional here — stage 3 reasoning degrades gracefully without it.
-    ollama = banner(console, require_llm=False)
-    entries = load_tracked_urls().get("companies", []) or []
-    # "uncategorized" == no scraper built yet == no scraper_key pinned in the yaml.
-    pending = [e for e in entries if not (e or {}).get("scraper_key")]
-    if not pending:
-        console.print("[green]Every tracked entry already has a scraper_key pinned.[/]")
-        return
-    console.print(f"Running recon (stages 1–3) on {len(pending)} uncategorized entr"
-                  f"{'y' if len(pending) == 1 else 'ies'}…\n")
-    agent = ReconAgent(ollama=ollama)
-    results: list[tuple[str, object]] = []
-    for entry in pending:
-        res = agent.investigate(entry.get("url", ""), company_name=entry.get("name"))
-        results.append((entry.get("name") or "?", res))
-        _print_recon(console, res)
-
-    table = Table(title="Recon-Pending Summary")
-    table.add_column("Company", style="cyan")
-    table.add_column("Status")
-    table.add_column("Platform/Scraper")
-    table.add_column("Conf.", justify="right")
-    table.add_column("Notes", max_width=40)
-    for name, res in results:
-        color = "green" if res.status == ReconStatus.MAPPED else "yellow"
-        table.add_row(
-            name,
-            f"[{color}]{res.status}[/]",
-            res.scraper_key or res.platform or "-",
-            f"{res.confidence:.2f}",
-            res.notes,
-        )
-    console.print(table)
-
-    needs = [name for name, res in results if res.status != ReconStatus.MAPPED]
-    if needs:
-        console.print(
-            f"\n[yellow]{len(needs)} entr{'y' if len(needs) == 1 else 'ies'} need a "
-            f"hand-built scraper:[/] {', '.join(needs)}"
-        )
-
-
-def cmd_add(console: Console, url: str) -> None:
-    ollama = banner(console, require_llm=True)
-    agent = ReconAgent(ollama=ollama)
-    res = agent.investigate(url)
-    _print_recon(console, res)
-
-    from urllib.parse import urlparse
-
-    default_name = urlparse(url).netloc
-    try:
-        name = input(f"Company name [{default_name}]: ").strip() or default_name
-    except (EOFError, KeyboardInterrupt):
-        name = default_name
-
-    path = config_path("tracked_urls.yaml")
-    data = load_tracked_urls() or {}
-    companies = data.setdefault("companies", [])
-    if any((c or {}).get("url") == url for c in companies):
-        console.print(f"[yellow]{url} is already tracked.[/]")
-        return
-    note = res.notes if res.status == ReconStatus.MAPPED else f"({res.status})"
-    companies.append({"name": name, "url": url, "notes": note})
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
-        console.print(f"[green]Added[/] {name} -> tracked_urls.yaml")
-    except Exception as exc:
-        console.print(f"[red]Could not write tracked_urls.yaml: {exc}[/]")
 
 
 def cmd_filter_jobs(
@@ -351,16 +269,6 @@ def cmd_jobs(console: Console, search: str | None) -> None:
         console.print("[yellow]No jobs found. Run `python main.py run` first.[/]")
 
 
-def _print_recon(console: Console, res) -> None:
-    color = "green" if res.status == ReconStatus.MAPPED else "yellow"
-    console.print(f"[bold]Recon[/] {res.url}")
-    console.print(f"  status    : [{color}]{res.status}[/]")
-    console.print(f"  scraper   : {res.scraper_key}")
-    console.print(f"  platform  : {res.platform}")
-    console.print(f"  confidence: {res.confidence:.2f}")
-    console.print(f"  notes     : {res.notes}\n")
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="job-scraper", description="Local-first agentic job scraper")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -377,12 +285,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--company", default=None,
                        help='run only this company (case-insensitive name match from tracked_urls.yaml)')
     sub.add_parser("watch", help="run once, then schedule on an interval")
-    p_recon = sub.add_parser("recon", help="run the recon agent on a single URL")
-    p_recon.add_argument("url")
-    sub.add_parser("recon-pending",
-                   help="run recon (stages 1–3) on every tracked entry without a scraper_key")
-    p_add = sub.add_parser("add", help="recon a URL then save it to tracked_urls.yaml")
-    p_add.add_argument("url")
     p_jobs = sub.add_parser("jobs", help="print recent / matching jobs from the DB")
     p_jobs.add_argument("--search", default=None, help="keyword to search in title + description")
     p_filter = sub.add_parser(
@@ -432,12 +334,6 @@ def main(argv: list[str] | None = None) -> None:
                 company=args.company, company_workers=args.company_workers)
     elif args.command == "watch":
         cmd_watch(console)
-    elif args.command == "recon":
-        cmd_recon(console, args.url)
-    elif args.command == "recon-pending":
-        cmd_recon_pending(console)
-    elif args.command == "add":
-        cmd_add(console, args.url)
     elif args.command == "jobs":
         cmd_jobs(console, args.search)
     elif args.command == "filter-jobs":

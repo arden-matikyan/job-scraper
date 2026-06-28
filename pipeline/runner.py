@@ -1,9 +1,10 @@
 """Pipeline runner: resolve a scraper per URL, scrape, extract, embed, store.
 
-For each tracked company: recon resolves a scraper (or skips with a logged reason),
-the scraper yields RawJobs, the extractor + embedder turn each into a record, and
-the store dedups + saves. A rich summary table is printed at the end. Every job is
-wrapped in try/except so one failure can't abort the run.
+For each tracked company: the entry's pinned ``scraper_key`` selects a scraper (an
+entry with no key is skipped with a logged reason), the scraper yields RawJobs, the
+extractor + embedder turn each into a record, and the store dedups + saves. A rich
+summary table is printed at the end. Every job is wrapped in try/except so one
+failure can't abort the run.
 """
 from __future__ import annotations
 
@@ -18,14 +19,7 @@ from rich.table import Table
 
 from agent.job_extractor import JobExtractor
 from agent.llm import LLMClient, get_llm_client
-from agent.recon_agent import (
-    PlatformKB,
-    ReconAgent,
-    ReconResult,
-    ReconStatus,
-    config_path,
-    load_yaml,
-)
+from config_io import config_path, load_yaml
 from scrapers.base import DEFAULT_USER_AGENT, HttpClient
 from scrapers.registry import registry as default_registry
 from storage.job_store import JobStore, compute_hash
@@ -33,6 +27,10 @@ from storage.job_store import JobStore, compute_hash
 logger = logging.getLogger(__name__)
 
 _EMBED_CHARS = 2000
+
+# Per-company outcome statuses surfaced in the summary table.
+STATUS_MAPPED = "MAPPED"
+STATUS_SKIPPED = "SKIPPED"
 
 
 def load_tracked_urls() -> dict:
@@ -60,7 +58,6 @@ class Runner:
         self,
         ollama: Optional[LLMClient] = None,
         store: Optional[JobStore] = None,
-        kb: Optional[PlatformKB] = None,
         http: Optional[HttpClient] = None,
         scraper_configs: Optional[dict] = None,
         console: Optional[Console] = None,
@@ -78,8 +75,6 @@ class Runner:
         )
         self.ollama = ollama or get_llm_client()
         self.store = store or JobStore()
-        self.kb = kb or PlatformKB()
-        self.recon = ReconAgent(http=self.http, ollama=self.ollama, kb=self.kb)
         self.extractor = JobExtractor(self.ollama)
         self.registry = default_registry
         self.console = console or Console()
@@ -165,28 +160,22 @@ class Runner:
         t0 = time.time()
         self.console.print(f"[bold cyan]>>[/] {name} — {url}")
 
-        # Allow tracked_urls.yaml to pin a scraper and skip recon entirely.
-        forced_key = entry.get("scraper_key") or None
-        if forced_key:
-            recon = ReconResult(url, forced_key, forced_key, 1.0,
-                                ReconStatus.MAPPED, f"forced via tracked_urls ({forced_key})")
-            self.console.print(f"   [dim]scraper forced: {forced_key}[/]")
-        else:
-            recon = self.recon.investigate(url, company_name=name)
-        if recon.status != ReconStatus.MAPPED or not recon.scraper_key:
-            self.store.log_recon(url, recon.platform, recon.scraper_key, 0,
-                                 f"{recon.status}: {recon.notes}")
-            self.console.print(f"   [yellow]SKIP[/] {recon.status}: {recon.notes}")
-            return RunResult(name, url, recon.scraper_key, 0, 0, 0, time.time() - t0, recon.status)
+        # Routing is fully manual: tracked_urls.yaml must pin a scraper_key.
+        scraper_key = entry.get("scraper_key") or None
+        if not scraper_key:
+            note = "no scraper_key pinned in tracked_urls.yaml"
+            self.store.log_recon(url, None, None, 0, f"{STATUS_SKIPPED}: {note}")
+            self.console.print(f"   [yellow]SKIP[/] {note}")
+            return RunResult(name, url, None, 0, 0, 0, time.time() - t0, STATUS_SKIPPED)
 
-        cfg = self._config_for(recon.scraper_key)
+        cfg = self._config_for(scraper_key)
         _ENTRY_META = {"name", "url", "scraper_key", "notes", "skip"}
         entry_extras = {k: v for k, v in entry.items() if k not in _ENTRY_META}
         cfg = {**cfg, **entry_extras}
-        scraper = self.registry.get(recon.scraper_key, http=self.http, config=cfg)
+        scraper = self.registry.get(scraper_key, http=self.http, config=cfg)
         if scraper is None:
-            self.store.log_recon(url, recon.platform, recon.scraper_key, 0, "instantiation failed")
-            return RunResult(name, url, recon.scraper_key, 0, 0, 0, time.time() - t0, "ERROR")
+            self.store.log_recon(url, scraper_key, scraper_key, 0, "instantiation failed")
+            return RunResult(name, url, scraper_key, 0, 0, 0, time.time() - t0, "ERROR")
 
         # Give the scraper the set of already-saved URLs so detail-fetch scrapers
         # can skip re-downloading job pages we already have (huge win on reruns).
@@ -195,16 +184,14 @@ class Runner:
         except Exception as exc:
             logger.warning("could not load seen_urls: %s", exc)
 
-        self.console.print(f"   scraper: [green]{recon.scraper_key}[/] — scraping…")
+        self.console.print(f"   scraper: [green]{scraper_key}[/] — scraping…")
         found, new, filtered = self._scrape_and_ingest(scraper, url, name)
 
-        if found:
-            self.recon.record_success(url, recon.platform)  # Stage 6 KB update
-        self.store.log_recon(url, recon.platform, recon.scraper_key, found, recon.notes)
+        self.store.log_recon(url, scraper_key, scraper_key, found, f"scraper_key={scraper_key}")
         elapsed = time.time() - t0
         extra = f", {filtered} filtered" if filtered else ""
         self.console.print(f"   [green]done[/] {found} found, {new} new{extra} in {elapsed:.1f}s")
-        return RunResult(name, url, recon.scraper_key, found, new, filtered, elapsed, recon.status)
+        return RunResult(name, url, scraper_key, found, new, filtered, elapsed, STATUS_MAPPED)
 
     def _ingest(self, raw, company_name: str) -> str:
         # Returns "new" | "duplicate" | "filtered".
@@ -328,7 +315,7 @@ class Runner:
             total_found += r.found
             total_new += r.new
             total_filtered += r.filtered
-            status_style = "green" if r.status == ReconStatus.MAPPED else "yellow"
+            status_style = "green" if r.status == STATUS_MAPPED else "yellow"
             table.add_row(
                 r.name, r.scraper_key or "-", str(r.found), str(r.new), str(r.filtered),
                 f"{r.seconds:.1f}s", f"[{status_style}]{r.status}[/]",
