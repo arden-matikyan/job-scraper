@@ -36,8 +36,12 @@ class AvatureScraper(BaseScraper):
 
         p = urlparse(url)
         base = f"{p.scheme}://{p.netloc}"
+        # The server returns exactly `jobRecordsPerPage` listings per results page,
+        # so the jobOffset step MUST equal the URL's value — a larger step silently
+        # skips the jobs in between (e.g. Deloitte uses 10; a config step of 20 hid
+        # half the catalog). The config value is only a fallback for URLs that omit it.
         qs_rpp = parse_qs(p.query).get("jobRecordsPerPage", [None])[0]
-        step = int(cfg.get("job_records_per_page", qs_rpp or 20))
+        step = int(qs_rpp or cfg.get("job_records_per_page", 20))
         seen: set[str] = set()
         for page in range(max_pages):
             page_url = add_query_param(url, "jobOffset", page * step)

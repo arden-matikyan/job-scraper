@@ -5,8 +5,9 @@ jobs.db
 scraper.log
 scraper.log.1
 logs/
-
+git 
 # Debug HTML snapshots
 *.html
 
 .env
+logs/scraper.log

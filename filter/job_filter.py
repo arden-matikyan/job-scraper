@@ -17,20 +17,110 @@ re-runs skip already-evaluated jobs.
 Note: title-relevance filtering (keyword match on the job title) is handled
 upstream in runner.py before jobs are saved to the DB, so it is not repeated
 here.
+
+Additive YAML rules
+-------------------
+If ``config/filter_rules.yaml`` exists (authored by ``filter_qa.py`` after human
+approval) its rules are loaded on init and applied *in addition to* the hard-coded
+logic above — never replacing it. ``type: regex`` rules disqualify deterministically
+and run before LLM disambiguation; ``type: llm_disambiguate`` rules pre-screen with
+their regex then confirm with the model. With no YAML file present the filter behaves
+exactly as it always has (fully backward compatible).
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from typing import Optional
 
+import yaml
 from rich.progress import track
 
 from agent.llm import LLMClient
+from scrapers.base import non_us_location
 from storage.job_store import JobStore
 
 logger = logging.getLogger(__name__)
+
+# Where filter_qa.py writes approved rules; also read here.
+FILTER_RULES_FILENAME = "filter_rules.yaml"
+_RULE_CATEGORIES = ("experience_rules", "clearance_rules")
+
+
+def default_filter_rules_path() -> str:
+    """Absolute path to config/filter_rules.yaml (created by filter_qa, optional here)."""
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(project_root, "config", FILTER_RULES_FILENAME)
+
+
+# --------------------------------------------------------------------------- #
+# Shared rule semantics
+#
+# These helpers define how a YAML rule maps onto a job dict. filter_qa.py imports
+# them for its regression test so its impact predictions match production exactly.
+# --------------------------------------------------------------------------- #
+def rule_field_text(job: dict, field: Optional[str]) -> str:
+    """Return the job text a rule's ``field`` targets ('title' | 'required_qualifications'
+    | 'full_text'). Unknown / missing field defaults to full_text."""
+    def _quals(key: str) -> str:
+        return "\n".join(
+            s for s in (job.get(key) or []) if isinstance(s, str)
+        )
+
+    if field == "title":
+        return str(job.get("title") or "")
+    if field == "required_qualifications":
+        return _quals("required_qualifications")
+    # full_text: everything we have, so a rule can match anywhere in the listing.
+    parts = [
+        str(job.get("title") or ""),
+        str(job.get("description_full") or ""),
+        _quals("required_qualifications"),
+        _quals("preferred_qualifications"),
+    ]
+    return "\n".join(p for p in parts if p)
+
+
+def compile_rule(rule: dict) -> Optional[re.Pattern]:
+    """Compile a rule's regex (case-insensitive). Returns None on a bad/empty pattern."""
+    pattern = rule.get("pattern")
+    if not pattern:
+        return None
+    try:
+        return re.compile(pattern, re.I)
+    except re.error as exc:
+        logger.warning("Ignoring filter rule %s — bad regex %r: %s",
+                       rule.get("id", "?"), pattern, exc)
+        return None
+
+
+def regex_rule_matches(job: dict, rule: dict) -> Optional[str]:
+    """If the rule's regex hits its target field, return the matched substring, else None."""
+    rx = compile_rule(rule)
+    if rx is None:
+        return None
+    m = rx.search(rule_field_text(job, rule.get("field") or "full_text"))
+    return m.group(0) if m else None
+
+
+def load_filter_rules(path: Optional[str] = None) -> dict:
+    """Load filter_rules.yaml as ``{'experience_rules': [...], 'clearance_rules': [...]}``.
+
+    A missing or unreadable file yields empty lists (backward compatible — the
+    filter then runs with hard-coded logic only).
+    """
+    path = path or default_filter_rules_path()
+    if not os.path.exists(path):
+        return {cat: [] for cat in _RULE_CATEGORIES}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except Exception as exc:
+        logger.error("Could not load %s: %s", path, exc)
+        data = {}
+    return {cat: list(data.get(cat) or []) for cat in _RULE_CATEGORIES}
 
 # Matches an experience requirement and captures the LOWER bound of any range:
 # "3+ years" -> 3, "3 plus years" -> 3, "3-5 years" -> 3, "1-3 years" -> 1 (kept),
@@ -80,9 +170,48 @@ Respond with JSON only, no explanation:
 
 
 class JobFilter:
-    def __init__(self, store: JobStore, ollama: LLMClient) -> None:
+    def __init__(
+        self,
+        store: JobStore,
+        ollama: LLMClient,
+        rules_path: Optional[str] = None,
+    ) -> None:
         self.store = store
         self.ollama = ollama
+        # Additive YAML rules (optional). Split by mechanism so regex rules can run
+        # before LLM disambiguation, per the spec. Each rule keeps its category so a
+        # disqualification reason can name it.
+        self.regex_rules: list[dict] = []
+        self.llm_rules: list[dict] = []
+        rules = load_filter_rules(rules_path)
+        for category in _RULE_CATEGORIES:
+            for rule in rules.get(category) or []:
+                tagged = {**rule, "category": category}
+                if tagged.get("type") == "llm_disambiguate":
+                    self.llm_rules.append(tagged)
+                else:
+                    self.regex_rules.append(tagged)
+        if self.regex_rules or self.llm_rules:
+            logger.info(
+                "Loaded %d regex + %d llm_disambiguate YAML filter rules",
+                len(self.regex_rules), len(self.llm_rules),
+            )
+        # Non-US location filter (same switch as the runner's pre-LLM stage). This
+        # catches scrapers whose location is only known after LLM extraction (Avature
+        # / iCIMS), at no extra model cost. Read from config/scraper_configs.yaml.
+        self.us_only, self.location_deny_extra = self._load_location_config()
+
+    @staticmethod
+    def _load_location_config() -> tuple[bool, list[str]]:
+        try:
+            from config_io import config_path, load_yaml
+            cfg = load_yaml(config_path("scraper_configs.yaml")) or {}
+        except Exception as exc:
+            logger.warning("Could not load scraper_configs for us_only: %s", exc)
+            return False, []
+        us_only = bool(cfg.get("us_only", False))
+        extra = [str(t) for t in (cfg.get("location_deny_extra") or []) if str(t).strip()]
+        return us_only, extra
 
     # ---------------------------------------------------------------- public
 
@@ -103,13 +232,27 @@ class JobFilter:
         for job in track(jobs, description="Filtering jobs…"):
             reasons: list[str] = []
 
+            loc = self._check_location(job)
+            if loc:
+                reasons.append(loc)
+
             exp = self._check_experience(job)
             if exp:
                 reasons.append(exp)
 
+            # YAML regex rules run before LLM disambiguation (cheap, deterministic).
+            yaml_regex = self._check_yaml_regex(job)
+            if yaml_regex:
+                reasons.append(yaml_regex)
+
             clearance = self._check_clearance(job)
             if clearance:
                 reasons.append(clearance)
+
+            # YAML llm_disambiguate rules: regex pre-screen, then model confirmation.
+            yaml_llm = self._check_yaml_llm(job)
+            if yaml_llm:
+                reasons.append(yaml_llm)
 
             if reasons:
                 status = "not_qualified"
@@ -134,6 +277,20 @@ class JobFilter:
         return deleted
 
     # --------------------------------------------------------------- private
+
+    def _check_location(self, job: dict) -> Optional[str]:
+        """Return a reason string if the job is recognizably non-US, else None.
+
+        Gated on `us_only`; deny-list, fail-open (see non_us_location). Covers jobs
+        whose location was only known after extraction (Avature / iCIMS).
+        """
+        if not self.us_only:
+            return None
+        location = job.get("location")
+        locations_all = job.get("locations_all") or []
+        if non_us_location(location, locations_all, self.location_deny_extra):
+            return f"Non-US location: {location or (locations_all[0] if locations_all else '?')}"
+        return None
 
     def _check_experience(self, job: dict) -> Optional[str]:
         """Return a reason string if ≥3 years of experience is required, else None."""
@@ -187,3 +344,54 @@ class JobFilter:
             return f"Clearance required: {evidence}"
 
         return None
+
+    # ------------------------------------------------------------- YAML rules
+
+    @staticmethod
+    def _rule_label(rule: dict, detail: str) -> str:
+        rid = rule.get("id", "?")
+        desc = rule.get("description") or ""
+        head = f"Rule {rid}" + (f" ({desc})" if desc else "")
+        return f"{head}: {detail}"
+
+    def _check_yaml_regex(self, job: dict) -> Optional[str]:
+        """First matching ``type: regex`` disqualify rule, or None."""
+        for rule in self.regex_rules:
+            if rule.get("action") not in (None, "disqualify", "disqualify_if_confirmed"):
+                continue
+            matched = regex_rule_matches(job, rule)
+            if matched:
+                logger.info(
+                    "Job %s disqualified by YAML rule %s: %r",
+                    job.get("id"), rule.get("id", "?"), matched,
+                )
+                return self._rule_label(rule, matched)
+        return None
+
+    def _check_yaml_llm(self, job: dict) -> Optional[str]:
+        """First ``type: llm_disambiguate`` rule whose regex hits AND the model confirms."""
+        for rule in self.llm_rules:
+            if not regex_rule_matches(job, rule):
+                continue
+            if self._llm_confirm_rule(job, rule):
+                logger.info(
+                    "Job %s disqualified by YAML llm rule %s",
+                    job.get("id"), rule.get("id", "?"),
+                )
+                return self._rule_label(rule, "confirmed by model")
+        return None
+
+    def _llm_confirm_rule(self, job: dict, rule: dict) -> bool:
+        """Ask the model whether ``job`` genuinely satisfies a disambiguation rule."""
+        text = rule_field_text(job, rule.get("field") or "required_qualifications")
+        prompt = (
+            "You are a job screener. A candidate disqualification rule pre-matched this "
+            "listing and needs confirmation.\n"
+            f"Rule: {rule.get('description') or '(no description)'}\n"
+            "Answer true ONLY if the job text genuinely satisfies the rule (an actual "
+            "requirement, not a 'preferred' or 'nice to have' mention).\n\n"
+            f"Job text:\n{text[:3000]}\n\n"
+            'Respond with JSON only: {"confirmed": true_or_false, "evidence": "<quote or null>"}'
+        )
+        result = self.ollama.generate_json(prompt, default={"confirmed": False})
+        return bool(isinstance(result, dict) and result.get("confirmed"))

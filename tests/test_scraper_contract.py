@@ -403,6 +403,65 @@ def test_elastic_skips_seen_url():
     assert jobs[0].title == "Principal Software Engineer"
 
 
+def test_amazon_smoke():
+    from scrapers.amazon_scraper import AmazonScraper
+
+    page = {"error": None, "hits": 1, "jobs": [{
+        "id_icims": "10461319",
+        "title": "Software Development Engineer",
+        "company_name": "Amazon.com Services LLC - A57",
+        "city": "Seattle", "state": "WA", "country_code": "USA",
+        "normalized_location": "Seattle, Washington, USA",
+        "location": "US, WA, Seattle",
+        "posted_date": "June 29, 2026",
+        "job_path": "/en/jobs/10461319/software-development-engineer",
+        "description": "Build distributed systems at scale.",
+        "basic_qualifications": "- 3+ years of &lt;b&gt;Java&lt;/b&gt; experience",
+        "preferred_qualifications": "- Experience with AWS",
+    }]}
+    http = FakeHttpClient(json_routes=[(lambda u: "search.json" in u, page)])
+    jobs = list(AmazonScraper(http=http).scrape(
+        "https://www.amazon.jobs/en/search?base_query=software&country%5B%5D=USA", "Amazon"))
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert_valid_job(job, "amazon")
+    assert job.job_id == "10461319"
+    assert job.title == "Software Development Engineer"
+    assert job.company == "Amazon"
+    assert job.location == "Seattle, Washington, USA"
+    assert job.posted_date == "2026-06-29"
+    assert job.platform == "amazon"
+    assert job.source_url == "https://www.amazon.jobs/en/jobs/10461319/software-development-engineer"
+    assert "Build distributed systems" in job.raw_text
+    assert "BASIC QUALIFICATIONS" in job.raw_text
+    assert "Java" in job.raw_text and "&lt;b&gt;" not in job.raw_text  # HTML unescaped
+    assert "PREFERRED QUALIFICATIONS" in job.raw_text
+
+
+def test_amazon_skips_seen_url():
+    from scrapers.amazon_scraper import AmazonScraper
+
+    page = {"error": None, "hits": 1, "jobs": [{
+        "id_icims": "10461319",
+        "title": "Software Development Engineer",
+        "normalized_location": "Seattle, Washington, USA",
+        "posted_date": "June 29, 2026",
+        "job_path": "/en/jobs/10461319/software-development-engineer",
+        "description": "SHOULD NOT MATTER",
+    }]}
+    http = FakeHttpClient(json_routes=[(lambda u: "search.json" in u, page)])
+    scraper = AmazonScraper(http=http)
+    scraper.seen_urls = {
+        "https://www.amazon.jobs/en/jobs/10461319/software-development-engineer"
+    }
+    jobs = list(scraper.scrape("https://www.amazon.jobs/en/search?base_query=software", "Amazon"))
+    assert len(jobs) == 1
+    assert jobs[0].already_seen is True
+    assert jobs[0].raw_text == ""
+    assert jobs[0].job_id == "10461319"
+    assert jobs[0].title == "Software Development Engineer"
+
+
 def test_static_html_smoke():
     from scrapers.static_html_scraper import StaticHtmlScraper
 

@@ -98,8 +98,16 @@ class JobStore:
                 CREATE INDEX IF NOT EXISTS idx_jobs_scraped_at ON jobs(scraped_at);
                 """
             )
-            # Safe migration: add filter columns if they don't exist yet.
-            for col, ctype in [("filter_status", "TEXT"), ("filter_reason", "TEXT")]:
+            # Safe migration: add filter / audit columns if they don't exist yet.
+            # Idempotent — ALTER raises OperationalError when the column is present,
+            # which we swallow, so constructing JobStore repeatedly is harmless.
+            # filter_flag_reason + audit_run_id back the filter_qa audit workflow.
+            for col, ctype in [
+                ("filter_status", "TEXT"),
+                ("filter_reason", "TEXT"),
+                ("filter_flag_reason", "TEXT"),
+                ("audit_run_id", "TEXT"),
+            ]:
                 try:
                     self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ctype}")
                     self._conn.commit()
@@ -280,6 +288,46 @@ class JobStore:
                 params,
             )
             return self._rows_to_dicts(cur.fetchall())
+
+    def get_jobs_by_filter_status(
+        self, status: str, limit: Optional[int] = None
+    ) -> list[dict]:
+        """Return all jobs with the given filter_status (e.g. 'qualified').
+
+        Used by filter_qa to load the passed / disqualified sets for auditing.
+        """
+        limit_clause = f"LIMIT {int(limit)}" if limit else ""
+        with self._lock:
+            cur = self._conn.execute(
+                f"SELECT * FROM jobs WHERE filter_status = ? ORDER BY id DESC {limit_clause}",
+                (status,),
+            )
+            return self._rows_to_dicts(cur.fetchall())
+
+    def tag_audit(
+        self, job_ids: list[int], status: str, reason: str, run_id: str
+    ) -> int:
+        """Bulk-set filter_status + filter_flag_reason + audit_run_id. Returns rows updated.
+
+        Used by the filter_qa audit to mark reviewed jobs ('flagged' / 'reviewed_ok')
+        with the reason and the audit run that touched them.
+        """
+        ids = [int(i) for i in (job_ids or []) if i is not None]
+        if not ids:
+            return 0
+        placeholders = ", ".join("?" for _ in ids)
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    f"UPDATE jobs SET filter_status = ?, filter_flag_reason = ?, "
+                    f"audit_run_id = ? WHERE id IN ({placeholders})",
+                    (status, reason, run_id, *ids),
+                )
+                self._conn.commit()
+                return cur.rowcount
+            except Exception as exc:
+                logger.error("tag_audit failed: %s", exc)
+                return 0
 
     def update_filter_status(self, job_id: int, status: str, reason: str) -> None:
         """Persist the filter decision for a single job."""

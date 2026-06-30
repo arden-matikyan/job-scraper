@@ -31,6 +31,7 @@ title_exclude:
   - "Level III"
   - "III"
   - "Civil"
+  - Technichian
 
 # Case-SENSITIVE title hard-exclude: same whole-word matching as title_exclude, but
 # the term must match exactly as written (so "IV" fires on "Engineer IV" but not on a
@@ -43,6 +44,15 @@ title_exclude_cs:
   - "L5"
   - "L6"
 
+
+# Non-US location filter (pipeline-level + filter stage): when true, a job whose
+# scraper/extracted location is recognizably non-US is dropped. Deny-list with
+# fail-open semantics — only positively-foreign locations are dropped; unknown or
+# US-marked locations are always kept (see non_us_location in scrapers/base.py).
+# `location_deny_extra` adds extra foreign substrings (e.g. UK county names) for the
+# residual "City, County" rows that carry no country code.
+us_only: true
+location_deny_extra: []
 
 # Keyword pre-filter (pipeline-level): a NEW job whose title contains none of these
 # (case-insensitive substring) is skipped BEFORE any LLM extraction.
