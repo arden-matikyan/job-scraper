@@ -20,7 +20,7 @@ from rich.table import Table
 from agent.job_extractor import JobExtractor
 from agent.llm import LLMClient, get_llm_client
 from config_io import config_path, load_yaml
-from scrapers.base import DEFAULT_USER_AGENT, HttpClient
+from scrapers.base import DEFAULT_USER_AGENT, HttpClient, non_us_location
 from scrapers.registry import registry as default_registry
 from storage.job_store import JobStore, compute_hash
 
@@ -114,6 +114,15 @@ class Runner:
             if _alts
             else None
         )
+        # Non-US location filter: when `us_only` is set, a NEW job whose scraper-known
+        # location is recognizably non-US is dropped before any LLM work (deny-list,
+        # fail-open — see non_us_location in scrapers.base). `location_deny_extra` adds
+        # caller-supplied foreign substrings (e.g. UK county names).
+        self.us_only = bool((self.scraper_configs or {}).get("us_only", False))
+        self.location_deny_extra = [
+            str(t) for t in ((self.scraper_configs or {}).get("location_deny_extra") or [])
+            if str(t).strip()
+        ]
 
     # ------------------------------------------------------------------- run
     def run(self, entries: list[dict]) -> list[RunResult]:
@@ -218,6 +227,16 @@ class Runner:
         if self.keyword_filter and not self._matches_keywords(raw):
             logger.info("FILTERED (no keyword match): %r — %s",
                         title, getattr(raw, "source_url", ""))
+            return "filtered"
+
+        # Non-US location filter: drop recognizably foreign jobs before any LLM work
+        # (only for scrapers that populate location pre-extraction; fail-open).
+        if self.us_only and non_us_location(
+            getattr(raw, "location", None), getattr(raw, "locations_all", None),
+            self.location_deny_extra,
+        ):
+            logger.info("FILTERED (non-US '%s'): %r — %s",
+                        getattr(raw, "location", None), title, getattr(raw, "source_url", ""))
             return "filtered"
 
         hints = raw.authoritative_fields()

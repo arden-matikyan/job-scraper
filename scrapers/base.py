@@ -7,6 +7,7 @@ retries, timeouts and a realistic User-Agent stay consistent across the codebase
 from __future__ import annotations
 
 import logging
+import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -243,6 +244,121 @@ def parse_posted_date(raw: Optional[str]) -> Optional[str]:
         except ValueError:
             continue
     return None
+
+
+# --------------------------------------------------------------------------- #
+# Non-US location filter (deny-list, fail-open)
+#
+# A job is flagged non-US ONLY when one of its location strings positively names a
+# foreign country/region AND none of them carry a US marker. A US signal anywhere
+# short-circuits to "keep"; a string with no signal either way is kept (fail-open),
+# so an unrecognised or sparse US format is never dropped. All matching is
+# whole-token / word-boundary, so "india" never matches inside "Indianapolis" and
+# California's ", CA" is distinct from Canada's "CA-" prefix / "CAN" ISO-3 code.
+# --------------------------------------------------------------------------- #
+_US_STATE_CODES = (
+    "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO "
+    "MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC"
+).split()
+_US_STATE_NAMES = [
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho", "illinois",
+    "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine", "maryland",
+    "massachusetts", "michigan", "minnesota", "mississippi", "missouri", "montana",
+    "nebraska", "nevada", "new hampshire", "new jersey", "new mexico", "new york",
+    "north carolina", "north dakota", "ohio", "oklahoma", "oregon", "pennsylvania",
+    "rhode island", "south carolina", "south dakota", "tennessee", "texas", "utah",
+    "vermont", "virginia", "washington", "west virginia", "wisconsin", "wyoming",
+    "district of columbia",
+]
+# Foreign country ISO-3 codes (whole uppercase token, e.g. "Bengaluru, …, IND").
+_FOREIGN_ISO3 = (
+    "IND AUS GBR IRL JPN CAN BRA MEX DEU ITA ESP NLD SGP TWN KOR ZAF THA ARE ISR "
+    "JOR LUX PHL POL CHE CHN HKG NZL SWE NOR DNK FIN BEL AUT ROU CZE HUN PRT GRC "
+    "TUR SAU EGY VNM IDN MYS COL CHL ARG PER"
+).split()
+# Foreign country / unambiguous foreign-city names (whole word, case-insensitive).
+_FOREIGN_NAMES = [
+    "india", "singapore", "japan", "canada", "mexico", "brazil", "germany",
+    "ireland", "united kingdom", "england", "scotland", "wales", "australia",
+    "israel", "poland", "philippines", "netherlands", "spain", "italy", "taiwan",
+    "south korea", "thailand", "switzerland", "china", "hong kong", "new zealand",
+    "romania", "luxembourg", "sweden", "norway", "denmark", "finland", "belgium",
+    "austria", "portugal", "greece", "turkey", "france", "colombia", "chile",
+    "argentina", "egypt", "vietnam", "indonesia", "malaysia", "saudi arabia",
+    "united arab emirates", "south africa", "jordan",
+    "london", "dublin", "toronto", "vancouver", "montreal", "sydney", "melbourne",
+    "tokyo", "bengaluru", "bangalore", "hyderabad", "mumbai", "chennai", "gurgaon",
+    "pune", "singapore city", "frankfurt", "munich", "milan", "madrid", "barcelona",
+    "amsterdam", "warsaw", "krakow", "wroclaw", "tel aviv", "shanghai", "beijing",
+    "seoul", "taipei", "bangkok", "manila", "sao paulo", "mexico city",
+]
+# Leading ISO-2 country prefix in compact Workday strings ("SG-01-…", "CA-ON-…").
+_FOREIGN_ISO2_PREFIX = (
+    "SG PL AU GB PH MX CA IN BR DE IE JP IL CN HK NZ SE NO DK FI BE AT RO CZ HU "
+    "MY KR TW TH AE CH ES IT NL PT GR TR SA EG VN ID CO CL AR PE ZA"
+).split()
+
+_US_STATE_CODE_RE = re.compile(
+    r"(?<![A-Za-z])(?:" + "|".join(_US_STATE_CODES) + r")(?![A-Za-z])"
+)
+_US_PHRASE_RE = re.compile(r"(?<![a-z])u\.?s\.?(?![a-z])", re.IGNORECASE)
+_US_PREFIX_RE = re.compile(r"^\s*US-")
+_FOREIGN_ISO3_RE = re.compile(
+    r"(?<![A-Za-z])(?:" + "|".join(_FOREIGN_ISO3) + r")(?![A-Za-z])"
+)
+_FOREIGN_NAME_RE = re.compile(
+    r"(?<![a-z])(?:" + "|".join(re.escape(n) for n in _FOREIGN_NAMES) + r")(?![a-z])",
+    re.IGNORECASE,
+)
+_FOREIGN_PREFIX_RE = re.compile(
+    r"^\s*(?:" + "|".join(_FOREIGN_ISO2_PREFIX) + r")-"
+)
+
+
+def _has_us_signal(s: str) -> bool:
+    low = s.lower()
+    if "united states" in low or "usa" in low or _US_PHRASE_RE.search(s):
+        return True
+    if _US_PREFIX_RE.match(s):
+        return True
+    if any(name in low for name in _US_STATE_NAMES):
+        return True
+    return bool(_US_STATE_CODE_RE.search(s))
+
+
+def _has_foreign_signal(s: str, extra: tuple[str, ...] = ()) -> bool:
+    if _FOREIGN_PREFIX_RE.match(s):
+        return True
+    if _FOREIGN_ISO3_RE.search(s):
+        return True
+    if _FOREIGN_NAME_RE.search(s):
+        return True
+    low = s.lower()
+    return any(tok and tok.lower() in low for tok in extra)
+
+
+def non_us_location(
+    location: Optional[str],
+    locations_all: Optional[list[str]] = None,
+    deny_extra: Optional[list[str]] = None,
+) -> bool:
+    """True if the job is recognizably non-US (safe to drop), else False.
+
+    Fail-open: returns False (keep) when a US signal is present anywhere, and also
+    when there is no recognizable signal either way. Only a positive foreign signal
+    with no US signal anywhere yields True. ``deny_extra`` adds caller-supplied
+    foreign substrings (e.g. UK county names) matched case-insensitively.
+    """
+    candidates = [location] if location else []
+    candidates += [s for s in (locations_all or []) if s]
+    candidates = [s.strip() for s in candidates if s and s.strip()]
+    if not candidates:
+        return False  # unknown location — keep
+    if any(_has_us_signal(s) for s in candidates):
+        return False  # US somewhere — keep
+    extra = tuple(deny_extra or ())
+    return any(_has_foreign_signal(s, extra) for s in candidates)
 
 
 def add_query_param(url: str, key: str, value: Any) -> str:

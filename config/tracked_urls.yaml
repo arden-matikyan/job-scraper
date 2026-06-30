@@ -6,12 +6,15 @@ companies:
   notes: Greenhouse
 - name: Booz Allen
   url: https://careers.boozallen.com/jobs/search?1485=USA&listFilterMode=1&jobRecordsPerPage=20
+  scraper_key: avature
   notes: Avature, pre-filtered to USA
 - name: RTX
   url: https://globalhr.wd5.myworkdayjobs.com/en-US/REC_RTX_Ext_Gateway?q=software
+  scraper_key: workday
   notes: Workday CXS (validated)
 - name: Fannie Mae
   url: https://fanniemae.wd1.myworkdayjobs.com/en-US/FannieMaeCareers
+  scraper_key: workday
   notes: Workday CXS (validated)
 - name: Freddie Mac
   url: https://careers.freddiemac.com/us/en/search-results?m=3&keywords=software
@@ -36,8 +39,10 @@ companies:
   notes: Eightfold PCSX JSON API, no browser needed
 - name: Geico
   url: https://geico.wd1.myworkdayjobs.com/External?q=software
+  scraper_key: workday
 - name: deloitte
   url: https://apply.deloitte.com/en_US/careers/SearchJobs/software?listFilterMode=1&jobRecordsPerPage=10&sort=relevancy
+  scraper_key: avature
   notes: known company (KB)
 - name: Leidos
   url: https://careers.leidos.com/search/clearance/none-public-trust/jobs/in/country/united-states?q=software
@@ -72,5 +77,10 @@ companies:
   url: https://jobs.elastic.co/jobs/department/engineering?size=n_20_n&filters%5B0%5D%5Bfield%5D=location&filters%5B0%5D%5Bvalues%5D%5B0%5D=United%20States&filters%5B0%5D%5Btype%5D=any
   scraper_key: elastic
   notes: Laravel SPA + Elastic App Search via same-origin /api/appSearch proxy (CSRF token); Greenhouse-backed, no browser
+- name: Amazon
+  url: https://www.amazon.jobs/en/search?offset=0&result_limit=10&sort=recent&country%5B%5D=USA&distanceType=Mi&radius=24km&industry_experience=less_than_1_year&latitude=&longitude=&loc_group_id=&loc_query=&base_query=software&city=&country=&region=&county=&query_options=&
+  scraper_key: amazon
+  oldest_date: "2026-05-18"
+  notes: amazon.jobs public search.json API (no browser); US-filtered, full description + quals inline
 
 

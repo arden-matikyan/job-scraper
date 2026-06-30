@@ -39,6 +39,7 @@ import yaml
 from rich.progress import track
 
 from agent.llm import LLMClient
+from scrapers.base import non_us_location
 from storage.job_store import JobStore
 
 logger = logging.getLogger(__name__)
@@ -195,6 +196,22 @@ class JobFilter:
                 "Loaded %d regex + %d llm_disambiguate YAML filter rules",
                 len(self.regex_rules), len(self.llm_rules),
             )
+        # Non-US location filter (same switch as the runner's pre-LLM stage). This
+        # catches scrapers whose location is only known after LLM extraction (Avature
+        # / iCIMS), at no extra model cost. Read from config/scraper_configs.yaml.
+        self.us_only, self.location_deny_extra = self._load_location_config()
+
+    @staticmethod
+    def _load_location_config() -> tuple[bool, list[str]]:
+        try:
+            from config_io import config_path, load_yaml
+            cfg = load_yaml(config_path("scraper_configs.yaml")) or {}
+        except Exception as exc:
+            logger.warning("Could not load scraper_configs for us_only: %s", exc)
+            return False, []
+        us_only = bool(cfg.get("us_only", False))
+        extra = [str(t) for t in (cfg.get("location_deny_extra") or []) if str(t).strip()]
+        return us_only, extra
 
     # ---------------------------------------------------------------- public
 
@@ -214,6 +231,10 @@ class JobFilter:
 
         for job in track(jobs, description="Filtering jobs…"):
             reasons: list[str] = []
+
+            loc = self._check_location(job)
+            if loc:
+                reasons.append(loc)
 
             exp = self._check_experience(job)
             if exp:
@@ -256,6 +277,20 @@ class JobFilter:
         return deleted
 
     # --------------------------------------------------------------- private
+
+    def _check_location(self, job: dict) -> Optional[str]:
+        """Return a reason string if the job is recognizably non-US, else None.
+
+        Gated on `us_only`; deny-list, fail-open (see non_us_location). Covers jobs
+        whose location was only known after extraction (Avature / iCIMS).
+        """
+        if not self.us_only:
+            return None
+        location = job.get("location")
+        locations_all = job.get("locations_all") or []
+        if non_us_location(location, locations_all, self.location_deny_extra):
+            return f"Non-US location: {location or (locations_all[0] if locations_all else '?')}"
+        return None
 
     def _check_experience(self, job: dict) -> Optional[str]:
         """Return a reason string if ≥3 years of experience is required, else None."""
